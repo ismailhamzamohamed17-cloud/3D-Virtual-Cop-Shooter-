@@ -1,867 +1,862 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import random
 
-st.set_page_config(page_title="Virtua Tactical: Hampi Jericho Ops", layout="centered")
-st.title("Virtua Tactical: Hampi Jericho Chronicles")
+st.set_page_config(page_title="Cargo Waterfront", layout="wide", initial_sidebar_state="collapsed")
 
-# Base HTML layout initialization
-game_html = '''
+# Kill Streamlit padding so the game fills the screen
+st.markdown(
+    """
+    <style>
+      #MainMenu, header, footer {visibility: hidden;}
+      .block-container {padding: 0 !important; max-width: 100% !important;}
+      section.main > div {padding: 0 !important;}
+      .stApp {background: #05070d;}
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+GAME_HTML = r"""
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
 <style>
-    body { margin: 0; padding: 0; font-family: 'Segoe UI', Arial, sans-serif; user-select: none; -webkit-user-select: none; background: #05070d; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { width:100%; height:100%; overflow:hidden; background:#05070d;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; -webkit-user-select:none; user-select:none; }
+  #app { position:fixed; inset:0; }
+  canvas { display:block; }
 
-    #gameArea {
-        position: relative; width: 420px; height: 520px;
-        background: #05070d; border: 1px solid #1e293b; overflow: hidden;
-        margin: auto; border-radius: 14px; touch-action: none;
-        box-shadow: 0 30px 70px rgba(0,0,0,0.9), inset 0 0 120px rgba(0,0,0,0.6);
-        cursor: crosshair;
-    }
-    /* subtle grain + vignette so the map does not look flat */
-    #gameArea::after {
-        content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 28;
-        background:
-            radial-gradient(125% 105% at 50% 38%, transparent 48%, rgba(0,0,0,0.62) 100%),
-            radial-gradient(60% 40% at 50% 100%, rgba(0,0,0,0.35), transparent 70%),
-            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E");
-        background-size: cover, cover, 180px 180px; transition: background-color 0.1s;
-    }
-    #gameArea.taking-damage::after { background-color: rgba(200, 20, 20, 0.28); box-shadow: inset 0 0 130px rgba(200,0,0,0.95); }
-    #gameArea.critical-pulse::after { animation: lowHp 0.55s ease-in-out infinite alternate; }
-    @keyframes lowHp {
-        0% { box-shadow: inset 0 0 80px rgba(150,0,0,0.55); }
-        100% { box-shadow: inset 0 0 150px rgba(255,0,0,0.9); }
-    }
+  /* ---------- HUD ---------- */
+  .hud { position:absolute; pointer-events:none; z-index:10; }
 
-    canvas {
-        position: absolute; top: 0; left: 0; width: 420px; height: 520px; z-index: 1;
-        /* cinematic teal-orange color grade + gentle contrast lift, purely CSS/GPU so it costs nothing per-frame */
-        filter: contrast(1.1) saturate(1.18) brightness(0.985) sepia(0.06) hue-rotate(-6deg);
-    }
+  #score {
+    top:18px; left:18px;
+    background:linear-gradient(#1b1e26,#0c0e13);
+    border:2px solid #3a3f4b; border-radius:10px;
+    padding:8px 16px; box-shadow:0 6px 18px rgba(0,0,0,.6), inset 0 0 0 2px #000;
+  }
+  #score b { font-family:'Courier New',monospace; font-size:34px; letter-spacing:3px;
+    color:#ffb400; text-shadow:0 0 8px rgba(255,180,0,.8); }
 
-    /* soft chromatic-fringe + cool/warm split-tone at the frame edges, sits above the canvas */
-    #gameArea::before {
-        content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 27; mix-blend-mode: screen; opacity: 0.5;
-        background:
-            radial-gradient(140% 90% at 8% 92%, rgba(255,140,60,0.10), transparent 42%),
-            radial-gradient(140% 90% at 92% 8%, rgba(70,160,255,0.10), transparent 42%);
-    }
+  #chapter { top:18px; right:18px; text-align:right; }
+  #chapter .row {
+    background:linear-gradient(#12161f,#0a0d13);
+    border:1px solid #2a5fff; border-radius:8px;
+    padding:8px 16px; margin-bottom:8px;
+    color:#66b2ff; font-weight:700; letter-spacing:2px; font-size:16px;
+    text-shadow:0 0 10px rgba(60,140,255,.7); box-shadow:0 0 16px rgba(40,90,255,.25);
+  }
 
-    /* the pistol is now drawn directly on the canvas for a clean, realistic first-person look */
+  /* health */
+  #hpwrap { bottom:22px; left:18px; display:flex; align-items:center; gap:10px; }
+  #hpwrap .lbl { color:#fff; font-weight:800; font-size:16px; letter-spacing:1px;
+    background:#000; padding:4px 8px; border-radius:5px; }
+  #hpbar { width:260px; height:26px; background:#111; border:2px solid #333; border-radius:6px;
+    display:flex; gap:2px; padding:3px; }
+  #hpbar i { flex:1; background:#e0202a; border-radius:2px; box-shadow:0 0 6px rgba(224,32,42,.8);
+    transition:background .2s; }
+  #hpbar i.off { background:#2a1113; box-shadow:none; }
 
-    #flash {
-        position: absolute; width: 66px; height: 66px;
-        background: radial-gradient(circle, #fffdf0 12%, #ffd257 34%, #ff7a18 60%, transparent 78%);
-        border-radius: 50%; display: none; z-index: 26;
-        filter: drop-shadow(0 0 16px #ff9d33); transform: translate(-50%,-50%);
-    }
-    #flash .spike { position:absolute; top:50%; left:50%; width:80px; height:6px; background:linear-gradient(90deg,transparent,#ffd257,transparent); transform:translate(-50%,-50%); }
-    #flash .spike.v { transform:translate(-50%,-50%) rotate(90deg); }
+  /* crosshair */
+  #cross { top:50%; left:50%; transform:translate(-50%,-50%); width:46px; height:46px; }
+  #cross .ring { position:absolute; inset:0; border:2px solid #21e6c1; border-radius:50%;
+    box-shadow:0 0 10px rgba(33,230,193,.9); opacity:.9; }
+  #cross .dot { position:absolute; top:50%; left:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
+    background:#21e6c1; border-radius:50%; box-shadow:0 0 8px #21e6c1; }
+  #cross span { position:absolute; background:#21e6c1; box-shadow:0 0 6px #21e6c1; }
+  #cross .t { top:-8px; left:50%; width:2px; height:8px; margin-left:-1px; }
+  #cross .b { bottom:-8px; left:50%; width:2px; height:8px; margin-left:-1px; }
+  #cross .l { left:-8px; top:50%; width:8px; height:2px; margin-top:-1px; }
+  #cross .r { right:-8px; top:50%; width:8px; height:2px; margin-top:-1px; }
 
-    .target-ring {
-        position: absolute; border: 2.5px dashed #ff2f5e; border-radius: 50%;
-        pointer-events: none; z-index: 10; transform: translate(-50%, -50%);
-        box-shadow: 0 0 12px #ff2f5e; opacity: 0; transition: opacity 0.12s ease;
-    }
-    #sight {
-        position: absolute; width: 34px; height: 34px; pointer-events: none;
-        transform: translate(-50%, -50%); z-index: 20; display: none;
-    }
-    #sight::before, #sight::after { content:''; position:absolute; background:#00f0ff; box-shadow:0 0 6px #00f0ff; }
-    #sight::before { top:50%; left:0; width:100%; height:2px; transform:translateY(-50%); }
-    #sight::after  { left:50%; top:0; height:100%; width:2px; transform:translateX(-50%); }
-    #sight .ringc { position:absolute; inset:6px; border:2px solid #00f0ff; border-radius:50%; box-shadow:0 0 8px #00f0ff; }
+  #kills { bottom:24px; left:50%; transform:translateX(-50%); text-align:center; }
+  #kills .box { background:rgba(8,10,16,.72); border:1px solid #2a5fff; border-radius:8px;
+    padding:6px 18px; color:#cfe4ff; font-weight:700; letter-spacing:1px; font-size:15px;
+    text-shadow:0 0 8px rgba(60,140,255,.6); }
 
-    #scoreCounter { position: absolute; top: 12px; left: 12px; color: #ffea00; font-weight: bold; font-family: 'Courier New', monospace; font-size: 22px; z-index: 30; background: rgba(0,0,0,0.85); padding: 4px 14px; border-radius: 6px; border: 1px solid #3f3f46; text-shadow: 0 0 6px #ffea00; display: none; }
-    #chapterTxt { position: absolute; top: 12px; right: 12px; color: #e2e8f0; font-weight: bold; font-size: 11px; z-index: 30; background: rgba(0,0,0,0.85); padding: 6px 12px; border-radius: 6px; border: 1px solid #3f3f46; letter-spacing: 1px; display: none; }
-    #targetTracker { position: absolute; top: 52px; right: 12px; color: #ff3366; font-weight: bold; font-family: monospace; font-size: 12px; z-index: 30; background: rgba(0,0,0,0.85); padding: 3px 8px; border-radius: 4px; display: none; }
-    #healthWrap { position:absolute; bottom:14px; left:12px; z-index:30; display:none; }
-    #healthBarBg { width:150px; height:14px; background:rgba(0,0,0,0.85); border:1px solid #ef4444; border-radius:7px; overflow:hidden; }
-    #healthBar { height:100%; width:100%; background:linear-gradient(90deg,#f87171,#dc2626); transition:width 0.2s; }
-    #healthLabel { color:#fca5a5; font-family:'Courier New',monospace; font-size:11px; font-weight:bold; margin-bottom:3px; text-shadow:0 0 4px #000; }
+  #flash { position:absolute; inset:0; background:radial-gradient(circle at 50% 50%, rgba(255,120,60,.0), rgba(255,60,40,.0));
+    z-index:9; pointer-events:none; }
+  #dmg { position:absolute; inset:0; z-index:8; pointer-events:none; box-shadow:inset 0 0 0 rgba(255,0,0,0);
+    transition:box-shadow .25s; }
 
-    #overScreen, #winScreen { position: absolute; inset: 0; background: rgba(2, 6, 23, 0.94); z-index: 40; display: none; flex-direction: column; align-items: center; justify-content: center; }
-    .retry-btn, .win-btn { margin-top: 20px; padding: 10px 24px; background: #ef4444; color: white; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 13px; }
-    .win-btn { background: #eab308; color: #020617; }
-    #chapterOverlay { position: absolute; inset: 0; background: #000000; z-index: 49; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-    @keyframes flashPulse { 0% { opacity: 0.6; } 100% { opacity: 1; } }
+  /* start / status overlay */
+  #overlay { position:absolute; inset:0; z-index:30; display:flex; flex-direction:column;
+    align-items:center; justify-content:center; text-align:center; color:#fff;
+    background:radial-gradient(circle at 50% 40%, rgba(20,30,55,.55), rgba(3,5,10,.92)); }
+  #overlay h1 { font-size:52px; letter-spacing:6px; color:#66b2ff;
+    text-shadow:0 0 24px rgba(60,140,255,.8); margin-bottom:8px; }
+  #overlay p { color:#a9c2e6; font-size:18px; margin:4px 0; max-width:560px; line-height:1.5; }
+  #overlay .btn { margin-top:26px; pointer-events:auto; cursor:pointer;
+    background:linear-gradient(#2a6bff,#1741c0); color:#fff; border:none; border-radius:10px;
+    padding:16px 44px; font-size:20px; font-weight:800; letter-spacing:2px;
+    box-shadow:0 8px 26px rgba(30,70,255,.5); }
+  #overlay .btn:hover { filter:brightness(1.12); }
+  #overlay small { color:#7d93b5; margin-top:18px; }
+  .hidden { display:none !important; }
+
+  #loading { position:absolute; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+    background:#05070d; color:#66b2ff; font-size:20px; letter-spacing:3px; }
 </style>
 </head>
 <body>
-    <div id="gameArea">
-        <div id="chapterOverlay">
-            <div style="color:white; font-family:monospace; font-size:18px; font-weight:bold; letter-spacing:3px;">CHAPTER 1</div>
-            <div style="color:#64748b; font-family:sans-serif; font-size:11px; margin-top:5px; letter-spacing:1px;">PORT TERMINAL SANITIZATION</div>
-        </div>
+<div id="app"></div>
 
-        <div id="tutorialPopup" style="position: absolute; top: 40%; left: 50%; transform: translate(-50%, -50%); color: #ff2266; font-family: monospace; font-size: 15px; font-weight: bold; background: rgba(0,0,0,0.85); border: 2px solid #ff2266; padding: 10px 16px; border-radius: 8px; z-index: 35; text-align: center; box-shadow: 0 0 15px rgba(255, 34, 102, 0.4); animation: flashPulse 1s infinite alternate; pointer-events: none; display:none;">
-            AIM &amp; CLICK THE ENEMY TO FIRE
-        </div>
+<div id="loading">LOADING WATERFRONT…</div>
 
-        <div id="scoreCounter">00200</div>
-        <div id="chapterTxt">CH 1: CONTAINER PORT</div>
-        <div id="targetTracker">SECTOR A: 0/3</div>
-        <div id="healthWrap">
-            <div id="healthLabel">HP</div>
-            <div id="healthBarBg"><div id="healthBar"></div></div>
-        </div>
+<div id="dmg"></div>
+<div id="flash"></div>
 
-        <canvas id="gameCanvas" width="420" height="520"></canvas>
-        <div id="sight"><div class="ringc"></div></div>
+<!-- HUD -->
+<div id="score" class="hud"><b>00000</b></div>
+<div id="chapter" class="hud">
+  <div class="row">CH 1: CARGO WATERFRONT</div>
+  <div class="row" id="sector">SECTOR E&nbsp; 0/4</div>
+</div>
+<div id="cross" class="hud">
+  <div class="ring"></div><div class="dot"></div>
+  <span class="t"></span><span class="b"></span><span class="l"></span><span class="r"></span>
+</div>
+<div id="hpwrap" class="hud">
+  <div class="lbl">HP</div>
+  <div id="hpbar"></div>
+</div>
+<div id="kills" class="hud">
+  <div class="box">Eliminate <b id="need">5</b> guards to advance &nbsp;·&nbsp; <span id="clearcount">0</span>/5</div>
+</div>
 
-        <div id="flash"><div class="spike"></div><div class="spike v"></div></div>
+<div id="overlay">
+  <h1>CARGO WATERFRONT</h1>
+  <p>Night raid on the container port. Aim with the mouse, click to fire.</p>
+  <p>Clear <b>5 guards</b> and you auto-advance deeper into the docks. Survive the sectors.</p>
+  <button class="btn" id="startBtn">DEPLOY</button>
+  <small>Click canvas to lock aim · ESC to release · WASD nudges your stance</small>
+</div>
 
-        <div id="overScreen">
-            <div style="color:#ef4444; font-size:32px; font-weight:bold; text-shadow:0 0 12px #000; font-family:monospace; letter-spacing:1px;">MISSION FAILURE</div>
-            <div id="finalScore" style="color:white; font-size:16px; margin-top:10px;">Final Score Log: 200</div>
-            <button class="retry-btn" onclick="window.resetArcadeEngine(true)">REDEPLOY OPERATIVE</button>
-        </div>
+<script type="importmap">
+{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
+</script>
 
-        <div id="winScreen">
-            <div style="color:#eab308; font-size:28px; font-weight:bold; text-shadow: 0 0 12px #eab308;">CAMPAIGN SECURED</div>
-            <div style="color:white; font-size:14px; text-align:center; margin-top:15px; max-width:320px; line-height:1.5;">EXCELLENT WORK JERICHO!<br>All terminals cleared successfully.</div>
-            <button class="win-btn" onclick="window.resetArcadeEngine(true)">REPLAY CAMPAIGN</button>
-        </div>
-    </div>
-<script>
-    const CW = 420, CH = 520, HORIZON = 250, CX0 = 210;
-    let currentX = CX0, currentY = HORIZON, score = 200, isOver = false;
-    let threatsList = []; let playerHp = 100;
-    let spawnTimerId = null, runLoopTimerId = null, heartbeatIntervalId = null;
-    let audioCtx = null;
-    let bloodParticles = []; let smokeParticles = [];
+<script type="module">
+import * as THREE from 'three';
 
-    let recoil = 0; let muzzleScreenX = CW - 150, muzzleScreenY = CH - 150;
-    const CORRIDOR_HALF = 1.15; // player path half-width; containers sit outside this
-    let currentSector = "A"; let sectorKills = 0; let sectorClearing = false;
-    const sectorsList = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
-    const sectorRequirements = { "A":3, "B":3, "C":3, "D":3, "E":4, "F":4, "G":4, "H":4, "I":4, "J":5 };
-    let isMoving = false;
+/* =========================================================
+   BASIC SETUP
+========================================================= */
+const app = document.getElementById('app');
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+app.appendChild(renderer.domElement);
 
-    const canvas = document.getElementById("gameCanvas"); const ctx = canvas.getContext("2d");
-    let cameraZ = 0, targetCameraZ = 0; let cameraX = 0, targetCameraX = 0; let cycleTick = 0;
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x070b16);
+scene.fog = new THREE.FogExp2(0x0a1224, 0.0075);
 
-    const gameArea = document.getElementById("gameArea");
-    const sight = document.getElementById("sight");
-    const scoreCounter = document.getElementById("scoreCounter");
-    const chapterTxt = document.getElementById("chapterTxt");
-    const targetTracker = document.getElementById("targetTracker");
-    const healthBar = document.getElementById("healthBar");
-    const overScreen = document.getElementById("overScreen");
-    const winScreen = document.getElementById("winScreen");
-    const finalScore = document.getElementById("finalScore");
-    const flash = document.getElementById("flash");
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 2000);
+camera.position.set(0, 2.6, 6);
 
-    // Shipping containers line BOTH sides of the walking corridor (|x| >= 3.0) so the
-    // player can never walk through one. side:1 => right face visible, -1 => left face.
-    const static3DObstacles = [
-        { id: "c1", x: -3.1, y: 0.9, z: 15, baseColor: "#0f766e", topColor:"#134e4a", side: 1,  stack:true,  label:"HJX" },
-        { id: "c2", x:  3.2, y: 0.9, z: 21, baseColor: "#b91c1c", topColor:"#7f1d1d", side:-1,  stack:false, label:"MRK" },
-        { id: "c3", x: -3.0, y: 0.9, z: 33, baseColor: "#1d4ed8", topColor:"#1e3a8a", side: 1,  stack:true,  label:"COS" },
-        { id: "c4", x:  3.1, y: 0.9, z: 41, baseColor: "#a16207", topColor:"#713f12", side:-1,  stack:false, label:"EVR" },
-        { id: "c5", x: -3.2, y: 0.9, z: 55, baseColor: "#475569", topColor:"#1e293b", side: 1,  stack:true,  label:"UNK" },
-        { id: "c6", x:  3.0, y: 0.9, z: 63, baseColor: "#0f766e", topColor:"#134e4a", side:-1,  stack:false, label:"HJX" },
-        { id: "c7", x: -3.1, y: 0.9, z: 77, baseColor: "#b45309", topColor:"#78350f", side: 1,  stack:true,  label:"ONE" },
-        { id: "c8", x:  3.2, y: 0.9, z: 91, baseColor: "#334155", topColor:"#1e293b", side:-1,  stack:false, label:"YML" }
-    ];
+/* rig that carries the camera forward down the dock */
+const rig = new THREE.Group();
+rig.position.set(0, 0, 0);
+scene.add(rig);
+rig.add(camera);
 
-    // true if a container blocks the straight sight-line between camera and (x,z)
-    function occludedBySpawn(x, z) {
-        for (let b of static3DObstacles) {
-            if (b.z <= cameraZ || b.z >= z) continue;         // must sit in front of camera, behind target
-            let f = (b.z - cameraZ) / (z - cameraZ);          // interpolate the sight-line at the crate's depth
-            let lineX = cameraX + (x - cameraX) * f;
-            if (Math.abs(lineX - b.x) < 1.5) return true;     // crate half-width + margin
-        }
-        return false;
+/* =========================================================
+   LIGHTING  (moonlit night)
+========================================================= */
+scene.add(new THREE.HemisphereLight(0x334466, 0x0a1020, 0.55));
+
+const moon = new THREE.DirectionalLight(0xbcd2ff, 1.15);
+moon.position.set(-60, 90, -40);
+moon.castShadow = true;
+moon.shadow.mapSize.set(2048, 2048);
+moon.shadow.camera.near = 1;
+moon.shadow.camera.far = 400;
+moon.shadow.camera.left = -120; moon.shadow.camera.right = 120;
+moon.shadow.camera.top = 120; moon.shadow.camera.bottom = -120;
+moon.shadow.bias = -0.0004;
+scene.add(moon);
+
+const fill = new THREE.DirectionalLight(0x2a4a8a, 0.35);
+fill.position.set(40, 30, 40);
+scene.add(fill);
+
+/* =========================================================
+   SKY : stars + moon disc
+========================================================= */
+(function sky(){
+  const g = new THREE.BufferGeometry();
+  const n = 1800, pos = new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const r = 900, th = Math.random()*Math.PI*2, ph = Math.acos(2*Math.random()-1);
+    pos[i*3]   = r*Math.sin(ph)*Math.cos(th);
+    pos[i*3+1] = Math.abs(r*Math.cos(ph))*0.9 + 30;
+    pos[i*3+2] = r*Math.sin(ph)*Math.sin(th);
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ color:0xdfe8ff, size:1.4, sizeAttenuation:false, transparent:true, opacity:.9 })));
+
+  const moonMat = new THREE.MeshBasicMaterial({ color:0xf2f4ff, fog:false });
+  const moonDisc = new THREE.Mesh(new THREE.CircleGeometry(26, 48), moonMat);
+  moonDisc.position.set(-180, 150, -520);
+  scene.add(moonDisc);
+  const halo = new THREE.Mesh(new THREE.CircleGeometry(46, 48),
+    new THREE.MeshBasicMaterial({ color:0x9fc0ff, transparent:true, opacity:.18, fog:false }));
+  halo.position.copy(moonDisc.position); halo.position.z -= 1;
+  scene.add(halo);
+})();
+
+/* =========================================================
+   GROUND : long concrete dock + water
+========================================================= */
+const DOCK_W = 34;         // dock width
+const WORLD_LEN = 900;     // how far the dock runs
+
+function concreteTexture(){
+  const c = document.createElement('canvas'); c.width=c.height=512;
+  const x = c.getContext('2d');
+  x.fillStyle='#3a3f47'; x.fillRect(0,0,512,512);
+  for(let i=0;i<9000;i++){
+    const g = 40+Math.random()*40;
+    x.fillStyle=`rgba(${g},${g+4},${g+8},${Math.random()*0.4})`;
+    x.fillRect(Math.random()*512, Math.random()*512, 2, 2);
+  }
+  x.strokeStyle='rgba(15,18,22,.6)'; x.lineWidth=3;
+  for(let i=0;i<=512;i+=128){ x.beginPath();x.moveTo(i,0);x.lineTo(i,512);x.stroke();
+    x.beginPath();x.moveTo(0,i);x.lineTo(512,i);x.stroke(); }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS=t.wrapT=THREE.RepeatWrapping; t.repeat.set(6, 160);
+  t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  return t;
+}
+const dock = new THREE.Mesh(
+  new THREE.PlaneGeometry(DOCK_W, WORLD_LEN),
+  new THREE.MeshStandardMaterial({ map:concreteTexture(), roughness:.95, metalness:.05, color:0x8a90a0 })
+);
+dock.rotation.x = -Math.PI/2;
+dock.position.z = -WORLD_LEN/2 + 20;
+dock.receiveShadow = true;
+scene.add(dock);
+
+/* water on both sides */
+const waterMat = new THREE.MeshStandardMaterial({ color:0x0a1a33, roughness:.15, metalness:.9,
+  transparent:true, opacity:.96 });
+function waterStrip(side){
+  const w = 400;
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, WORLD_LEN), waterMat);
+  m.rotation.x = -Math.PI/2; m.position.y = -0.6;
+  m.position.x = side*(DOCK_W/2 + w/2); m.position.z = dock.position.z;
+  scene.add(m); return m;
+}
+const waterL = waterStrip(-1), waterR = waterStrip(1);
+
+/* dock edge rails */
+function rail(side){
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color:0x1a1d24, roughness:.6, metalness:.7 });
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, WORLD_LEN), mat);
+  bar.position.set(side*(DOCK_W/2-0.4), 0.9, dock.position.z);
+  bar.castShadow = true; g.add(bar);
+  for(let z=40; z> -WORLD_LEN; z-=14){
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.12,0.12,0.9,8), mat);
+    p.position.set(side*(DOCK_W/2-0.4), 0.45, z); g.add(p);
+  }
+  scene.add(g);
+}
+rail(-1); rail(1);
+
+/* =========================================================
+   SHIPPING CONTAINERS  (colored, stacked, textured)
+========================================================= */
+const containerColors = [0xb23b2e,0x2e5fb2,0xc9962f,0x2f8f5b,0x8a8f99,0xb2662e,0x6a2f8f];
+function containerTex(base){
+  const c = document.createElement('canvas'); c.width=256; c.height=128;
+  const x = c.getContext('2d');
+  const col = new THREE.Color(base);
+  x.fillStyle = `rgb(${col.r*255|0},${col.g*255|0},${col.b*255|0})`; x.fillRect(0,0,256,128);
+  // corrugation
+  for(let i=0;i<256;i+=10){
+    x.fillStyle='rgba(0,0,0,.18)'; x.fillRect(i,0,4,128);
+    x.fillStyle='rgba(255,255,255,.06)'; x.fillRect(i+5,0,2,128);
+  }
+  // rust streaks
+  for(let i=0;i<40;i++){
+    x.fillStyle=`rgba(60,30,10,${Math.random()*.35})`;
+    x.fillRect(Math.random()*256, Math.random()*90, 3, 20+Math.random()*30);
+  }
+  x.strokeStyle='rgba(0,0,0,.5)'; x.lineWidth=6; x.strokeRect(3,3,250,122);
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t;
+}
+const contGeo = new THREE.BoxGeometry(6, 2.6, 2.5);
+const collidables = [];   // boxes we can pass / raycast context
+function makeContainer(x,y,z,color,rotY=0){
+  const tex = containerTex(color);
+  const mat = new THREE.MeshStandardMaterial({ map:tex, roughness:.85, metalness:.25 });
+  const m = new THREE.Mesh(contGeo, mat);
+  m.position.set(x, y+1.3, z); m.rotation.y = rotY;
+  m.castShadow = m.receiveShadow = true;
+  scene.add(m); collidables.push(m);
+  return m;
+}
+
+/* build clusters of containers running down both sides of the dock */
+const clusters = [];   // z positions where footsteps trigger
+for(let z=-20; z>-WORLD_LEN+60; z-=55){
+  clusters.push(z);
+  const side = (Math.random()<0.5)?-1:1;
+  // a stacked wall on one side
+  const bx = side*(DOCK_W/2 - 5);
+  const stacks = 2 + (Math.random()*2|0);
+  for(let s=0;s<stacks;s++){
+    const rows = 1 + (Math.random()*2|0);
+    for(let r=0;r<rows;r++){
+      makeContainer(bx + s*0.2, r*2.6, z - s*2.7,
+        containerColors[(Math.random()*containerColors.length)|0], (Math.random()-.5)*0.06);
+    }
+  }
+  // scattered singles on the other side
+  if(Math.random()<0.7){
+    makeContainer(-side*(DOCK_W/2 - 6), 0, z + 12 - Math.random()*10,
+      containerColors[(Math.random()*containerColors.length)|0], (Math.random()-.5)*0.4);
+  }
+}
+
+/* =========================================================
+   CRANES + CARGO SHIP (background silhouettes with lights)
+========================================================= */
+function crane(x,z){
+  const g = new THREE.Group();
+  const mat = new THREE.MeshStandardMaterial({ color:0x394050, roughness:.7, metalness:.6 });
+  const legGeo = new THREE.BoxGeometry(1.1,26,1.1);
+  [[-4,-2],[4,-2],[-4,4],[4,4]].forEach(([lx,lz])=>{
+    const l = new THREE.Mesh(legGeo, mat); l.position.set(lx,13,lz); g.add(l);
+  });
+  const top = new THREE.Mesh(new THREE.BoxGeometry(11,2,10), mat); top.position.y=27; g.add(top);
+  const boom = new THREE.Mesh(new THREE.BoxGeometry(2,1.4,40), mat); boom.position.set(0,27,-16); g.add(boom);
+  // red beacon
+  const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.5,8,8),
+    new THREE.MeshBasicMaterial({ color:0xff2a2a }));
+  beacon.position.set(0,28.5,0); g.add(beacon);
+  const bl = new THREE.PointLight(0xff2a2a, 2, 40); bl.position.copy(beacon.position); g.add(bl);
+  g.position.set(x, 0, z);
+  scene.add(g);
+  return beacon;
+}
+const beacons = [];
+beacons.push(crane(-70, -140));
+beacons.push(crane(-72, -260));
+beacons.push(crane(78, -380));
+
+function cargoShip(x,z){
+  const g = new THREE.Group();
+  const hull = new THREE.Mesh(new THREE.BoxGeometry(140, 22, 34),
+    new THREE.MeshStandardMaterial({ color:0x111a2c, roughness:.6, metalness:.5 }));
+  hull.position.y = 8; g.add(hull);
+  // deck container blocks
+  for(let i=0;i<12;i++){
+    const b = new THREE.Mesh(new THREE.BoxGeometry(9,7,26),
+      new THREE.MeshStandardMaterial({ color:containerColors[i%containerColors.length], roughness:.8 }));
+    b.position.set(-56 + i*10, 22, 0); g.add(b);
+  }
+  // cabin with lit windows
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(16,18,26),
+    new THREE.MeshStandardMaterial({ color:0x1a2436 }));
+  cab.position.set(58,26,0); g.add(cab);
+  for(let wy=0;wy<5;wy++)for(let wx=0;wx<3;wx++){
+    const w = new THREE.Mesh(new THREE.PlaneGeometry(2,1.4),
+      new THREE.MeshBasicMaterial({ color:0xffd98a }));
+    w.position.set(58+ (wx-1)*4, 20+wy*3, 13.1); g.add(w);
+  }
+  g.position.set(x,0,z); g.rotation.y = Math.PI*0.02;
+  scene.add(g);
+}
+cargoShip(-150, -320);
+
+/* far shoreline city lights */
+(function cityLights(){
+  const g = new THREE.BufferGeometry();
+  const n=400, pos=new Float32Array(n*3), col=new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    pos[i*3]=(Math.random()-0.5)*800;
+    pos[i*3+1]=Math.random()*4+1;
+    pos[i*3+2]=-560 - Math.random()*120;
+    const warm=Math.random()<0.7;
+    col[i*3]= warm?1:0.6; col[i*3+1]= warm?0.8:0.8; col[i*3+2]= warm?0.4:1;
+  }
+  g.setAttribute('position', new THREE.BufferAttribute(pos,3));
+  g.setAttribute('color', new THREE.BufferAttribute(col,3));
+  scene.add(new THREE.Points(g, new THREE.PointsMaterial({ size:2.4, sizeAttenuation:false, vertexColors:true })));
+})();
+
+/* dock lamp posts (pools of light) */
+for(let z=30; z>-WORLD_LEN; z-=48){
+  const side=(z%2===0)?1:-1;
+  const post = new THREE.Mesh(new THREE.CylinderGeometry(0.15,0.2,7,8),
+    new THREE.MeshStandardMaterial({ color:0x20242c, metalness:.6, roughness:.5 }));
+  post.position.set(side*(DOCK_W/2-1.2), 3.5, z); post.castShadow=true; scene.add(post);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35,10,10),
+    new THREE.MeshBasicMaterial({ color:0xffe6a8 }));
+  lamp.position.set(side*(DOCK_W/2-1.2), 7, z); scene.add(lamp);
+  const pl = new THREE.PointLight(0xffd18a, 1.6, 26, 2); pl.position.copy(lamp.position); scene.add(pl);
+}
+
+/* =========================================================
+   GUARDS  (rigged humanoid figures)
+========================================================= */
+const skinMat   = new THREE.MeshStandardMaterial({ color:0xc79b7a, roughness:.7 });
+const suitMat   = new THREE.MeshStandardMaterial({ color:0x1c2129, roughness:.75, metalness:.15 });
+const vestMat   = new THREE.MeshStandardMaterial({ color:0x2b2f38, roughness:.6, metalness:.3 });
+const gunMat    = new THREE.MeshStandardMaterial({ color:0x0e0f12, roughness:.4, metalness:.8 });
+
+const guards = [];
+function makeGuard(x,z){
+  const g = new THREE.Group();
+
+  const torso = new THREE.Mesh(new THREE.CapsuleGeometry(0.34,0.7,4,10), suitMat);
+  torso.position.y = 1.32; torso.castShadow=true; g.add(torso);
+
+  const vest = new THREE.Mesh(new THREE.BoxGeometry(0.72,0.72,0.42), vestMat);
+  vest.position.y = 1.42; vest.castShadow=true; g.add(vest);
+
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.24,16,16), skinMat);
+  head.position.y = 1.95; head.castShadow=true; g.add(head);
+  const helmet = new THREE.Mesh(new THREE.SphereGeometry(0.27,16,16, 0, Math.PI*2, 0, Math.PI*0.55), vestMat);
+  helmet.position.y = 1.99; g.add(helmet);
+
+  const legGeo = new THREE.CapsuleGeometry(0.16,0.72,4,8);
+  const lL = new THREE.Mesh(legGeo, suitMat); lL.position.set(-0.18,0.55,0); lL.castShadow=true; g.add(lL);
+  const lR = new THREE.Mesh(legGeo, suitMat); lR.position.set( 0.18,0.55,0); lR.castShadow=true; g.add(lR);
+
+  const armGeo = new THREE.CapsuleGeometry(0.13,0.6,4,8);
+  const aL = new THREE.Mesh(armGeo, suitMat); aL.position.set(-0.5,1.35,0.15); aL.rotation.x=-0.5; g.add(aL);
+  const aR = new THREE.Mesh(armGeo, suitMat); aR.position.set( 0.5,1.35,0.15); aR.rotation.x=-0.5; g.add(aR);
+
+  // rifle held forward
+  const rifle = new THREE.Group();
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.1,0.14,0.9), gunMat); rifle.add(body);
+  const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.03,0.03,0.5,8), gunMat);
+  barrel.rotation.x=Math.PI/2; barrel.position.z=-0.6; rifle.add(barrel);
+  const mag = new THREE.Mesh(new THREE.BoxGeometry(0.08,0.28,0.12), gunMat); mag.position.set(0,-0.18,0.1); rifle.add(mag);
+  rifle.position.set(0.42,1.25,0.35); g.add(rifle);
+
+  // muzzle flash placeholder
+  const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8),
+    new THREE.MeshBasicMaterial({ color:0xffcf6b, transparent:true, opacity:0 }));
+  flash.position.set(0.42,1.25,-0.35); g.add(flash);
+
+  g.position.set(x, 0, z);
+  g.userData = {
+    alive:true, hp:2, torso, head, flash,
+    fireCd: 1.2 + Math.random()*1.6,
+    fireTimer: 1 + Math.random()*2,
+    wobble: Math.random()*Math.PI*2,
+  };
+  scene.add(g);
+  guards.push(g);
+  return g;
+}
+
+/* enemy hit-collection for raycaster (torso+head+vest) */
+function guardHitMeshes(){
+  const arr=[];
+  guards.forEach(gd=>{ if(gd.userData.alive){ gd.children.forEach(c=>{ if(c.isMesh){ c.userData.guard=gd; arr.push(c);} }); } });
+  return arr;
+}
+
+/* spawn a wave of guards ahead of the player */
+let waveIndex = 0;
+function spawnWave(zBase){
+  const count = 5;              // exactly 5 to advance
+  for(let i=0;i<count;i++){
+    const x = (Math.random()-0.5)*(DOCK_W-8);
+    const z = zBase - 14 - Math.random()*22;
+    makeGuard(x, z);
+  }
+}
+
+/* =========================================================
+   FIRST-PERSON PISTOL  (correctly oriented, pointing forward/up)
+========================================================= */
+const weapon = new THREE.Group();
+camera.add(weapon);
+
+function buildPistol(){
+  const g = new THREE.Group();
+  const black = new THREE.MeshStandardMaterial({ color:0x14161b, roughness:.35, metalness:.85 });
+  const grey  = new THREE.MeshStandardMaterial({ color:0x2a2e36, roughness:.4, metalness:.8 });
+  const glove = new THREE.MeshStandardMaterial({ color:0x14171d, roughness:.9, metalness:.05 });
+
+  // slide (top)
+  const slide = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.14, 0.62), black);
+  slide.position.set(0, 0.02, -0.30); g.add(slide);
+  // barrel tip
+  const tip = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.12, 0.06), grey);
+  tip.position.set(0, 0.02, -0.62); g.add(tip);
+  // frame
+  const frame = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.10, 0.5), grey);
+  frame.position.set(0, -0.06, -0.24); g.add(frame);
+  // grip angled back-down
+  const grip = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.34, 0.16), black);
+  grip.position.set(0, -0.24, 0.02); grip.rotation.x = 0.28; g.add(grip);
+  // trigger guard
+  const guard = new THREE.Mesh(new THREE.TorusGeometry(0.06, 0.015, 8, 16), grey);
+  guard.position.set(0, -0.10, -0.05); guard.rotation.y = Math.PI/2; g.add(guard);
+  // rear sight
+  const sight = new THREE.Mesh(new THREE.BoxGeometry(0.11,0.03,0.04), black);
+  sight.position.set(0,0.10,-0.02); g.add(sight);
+
+  // hands (gloved) cupping the grip
+  const handR = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.2,0.22), glove);
+  handR.position.set(0.02,-0.26,0.08); handR.rotation.x=0.3; g.add(handR);
+  const handL = new THREE.Mesh(new THREE.BoxGeometry(0.16,0.16,0.2), glove);
+  handL.position.set(-0.10,-0.2,0.02); handL.rotation.z=0.4; g.add(handL);
+  const foreR = new THREE.Mesh(new THREE.CylinderGeometry(0.09,0.11,0.5,10), glove);
+  foreR.position.set(0.08,-0.5,0.28); foreR.rotation.x=0.7; g.add(foreR);
+  const foreL = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.1,0.45,10), glove);
+  foreL.position.set(-0.16,-0.46,0.22); foreL.rotation.set(0.7,0,0.3); g.add(foreL);
+
+  // muzzle flash
+  const mflash = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.24,8),
+    new THREE.MeshBasicMaterial({ color:0xffd27a, transparent:true, opacity:0, fog:false }));
+  mflash.rotation.x = -Math.PI/2; mflash.position.set(0,0.02,-0.72); g.add(mflash);
+  g.userData.mflash = mflash;
+
+  return g;
+}
+const pistol = buildPistol();
+// bottom-right of the view, pointing into the scene (forward -Z), slightly up
+pistol.position.set(0.28, -0.34, -0.6);
+pistol.rotation.set(0.06, -0.04, 0);
+weapon.add(pistol);
+
+const muzzleLight = new THREE.PointLight(0xffb455, 0, 12, 2);
+muzzleLight.position.set(0.28,-0.2,-1.1);
+camera.add(muzzleLight);
+
+/* =========================================================
+   AUDIO  (WebAudio synth: footsteps + gunshots + hits)
+========================================================= */
+let AC = null;
+function audio(){ if(!AC){ AC = new (window.AudioContext||window.webkitAudioContext)(); } return AC; }
+
+function gunshot(){
+  const ac = audio(); const t = ac.currentTime;
+  // noise burst
+  const buf = ac.createBuffer(1, ac.sampleRate*0.25, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++){ d[i] = (Math.random()*2-1) * Math.pow(1 - i/d.length, 3); }
+  const src = ac.createBufferSource(); src.buffer = buf;
+  const bp = ac.createBiquadFilter(); bp.type='lowpass'; bp.frequency.value=1800;
+  const g = ac.createGain(); g.gain.setValueAtTime(0.9, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.22);
+  src.connect(bp).connect(g).connect(ac.destination); src.start(t);
+  // low thump
+  const o = ac.createOscillator(); o.type='sine'; o.frequency.setValueAtTime(160,t);
+  o.frequency.exponentialRampToValueAtTime(40,t+0.12);
+  const og = ac.createGain(); og.gain.setValueAtTime(0.7,t); og.gain.exponentialRampToValueAtTime(0.001,t+0.15);
+  o.connect(og).connect(ac.destination); o.start(t); o.stop(t+0.16);
+}
+function footstep(hard){
+  const ac = audio(); const t = ac.currentTime;
+  const buf = ac.createBuffer(1, ac.sampleRate*0.12, ac.sampleRate);
+  const d = buf.getChannelData(0);
+  for(let i=0;i<d.length;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,4); }
+  const src = ac.createBufferSource(); src.buffer=buf;
+  const bp = ac.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value= hard?420:260; bp.Q.value=1.2;
+  const g = ac.createGain(); g.gain.setValueAtTime(hard?0.5:0.32, t); g.gain.exponentialRampToValueAtTime(0.001, t+0.1);
+  src.connect(bp).connect(g).connect(ac.destination); src.start(t);
+}
+function hitSound(){
+  const ac=audio(); const t=ac.currentTime;
+  const o=ac.createOscillator(); o.type='square'; o.frequency.setValueAtTime(300,t);
+  o.frequency.exponentialRampToValueAtTime(90,t+0.1);
+  const g=ac.createGain(); g.gain.setValueAtTime(0.25,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.12);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.13);
+}
+function hurtSound(){
+  const ac=audio(); const t=ac.currentTime;
+  const o=ac.createOscillator(); o.type='sawtooth'; o.frequency.setValueAtTime(120,t);
+  const g=ac.createGain(); g.gain.setValueAtTime(0.3,t); g.gain.exponentialRampToValueAtTime(0.001,t+0.2);
+  o.connect(g).connect(ac.destination); o.start(t); o.stop(t+0.21);
+}
+
+/* =========================================================
+   HUD helpers
+========================================================= */
+const scoreEl   = document.querySelector('#score b');
+const sectorEl  = document.getElementById('sector');
+const clearEl   = document.getElementById('clearcount');
+const hpbar     = document.getElementById('hpbar');
+const dmgEl     = document.getElementById('dmg');
+const overlay   = document.getElementById('overlay');
+const startBtn  = document.getElementById('startBtn');
+const loadingEl = document.getElementById('loading');
+
+const HP_SEG = 24;
+for(let i=0;i<HP_SEG;i++){ const s=document.createElement('i'); hpbar.appendChild(s); }
+function renderHP(){
+  const on = Math.round(state.hp/100*HP_SEG);
+  [...hpbar.children].forEach((s,i)=> s.classList.toggle('off', i>=on));
+}
+function setScore(v){ scoreEl.textContent = String(v).padStart(5,'0'); }
+function setSector(){ sectorEl.innerHTML = 'SECTOR '+String.fromCharCode(69+ (state.sector%4)) +'&nbsp; '+ (state.sector%4)+'/4'; }
+
+/* =========================================================
+   GAME STATE
+========================================================= */
+const state = {
+  running:false, hp:100, score:0, sector:0,
+  cleared:0, killsThisWave:0,
+  advancing:false, advanceTarget:0,
+  lastStepZ:0, stepPhase:0,
+  yaw:0, pitch:0,
+  strafe:0,
+};
+
+function startGame(){
+  overlay.classList.add('hidden');
+  audio(); // unlock
+  state.running=true; state.hp=100; state.score=0; state.sector=0;
+  state.cleared=0; state.killsThisWave=0;
+  rig.position.set(0,0,0);
+  spawnWave(-30);
+  setScore(0); renderHP(); setSector();
+}
+startBtn.addEventListener('click', startGame);
+
+/* =========================================================
+   INPUT : mouse look (pointer lock) + click fire
+========================================================= */
+const canvas = renderer.domElement;
+canvas.addEventListener('click', ()=>{
+  if(!state.running) return;
+  if(document.pointerLockElement !== canvas){ canvas.requestPointerLock(); return; }
+  fire();
+});
+document.addEventListener('mousemove', (e)=>{
+  if(document.pointerLockElement !== canvas) return;
+  state.yaw   -= e.movementX * 0.0022;
+  state.pitch -= e.movementY * 0.0022;
+  state.pitch = Math.max(-0.6, Math.min(0.6, state.pitch));
+  state.yaw   = Math.max(-0.9, Math.min(0.9, state.yaw));
+});
+addEventListener('keydown', e=>{
+  if(e.key==='a'||e.key==='ArrowLeft') state.strafe=-1;
+  if(e.key==='d'||e.key==='ArrowRight') state.strafe=1;
+});
+addEventListener('keyup', e=>{
+  if(['a','d','ArrowLeft','ArrowRight'].includes(e.key)) state.strafe=0;
+});
+
+/* =========================================================
+   FIRING
+========================================================= */
+const raycaster = new THREE.Raycaster();
+let recoil = 0;
+function fire(){
+  gunshot();
+  recoil = 0.16;
+  pistol.userData.mflash.material.opacity = 1;
+  muzzleLight.intensity = 4;
+
+  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  const hits = raycaster.intersectObjects(guardHitMeshes(), false);
+  if(hits.length){
+    const gd = hits[0].object.userData.guard;
+    const headHit = hits[0].object === gd.userData.head || hits[0].object === gd.userData.helmet;
+    gd.userData.hp -= headHit ? 2 : 1;
+    hitSound();
+    // blood puff
+    puff(hits[0].point, 0xaa1518);
+    if(gd.userData.hp<=0){ killGuard(gd); }
+  }
+}
+
+function killGuard(gd){
+  gd.userData.alive=false;
+  gd.userData.vy = 0; gd.userData.dying = true;
+  state.score += 100; setScore(state.score);
+  state.killsThisWave++;
+  state.cleared = state.killsThisWave;
+  clearEl.textContent = Math.min(state.killsThisWave,5);
+  if(state.killsThisWave>=5){
+    // advance
+    state.killsThisWave = 0;
+    beginAdvance();
+  }
+}
+
+/* small particle puff */
+const puffs = [];
+function puff(pos, color){
+  const g = new THREE.Group();
+  for(let i=0;i<8;i++){
+    const p = new THREE.Mesh(new THREE.SphereGeometry(0.05,6,6),
+      new THREE.MeshBasicMaterial({ color, transparent:true, opacity:1 }));
+    p.position.copy(pos);
+    p.userData.v = new THREE.Vector3((Math.random()-.5)*3,(Math.random()*2),(Math.random()-.5)*3);
+    g.add(p);
+  }
+  g.userData.life = 0.5; scene.add(g); puffs.push(g);
+}
+
+/* =========================================================
+   AUTO ADVANCE : walk forward to next sector
+========================================================= */
+function beginAdvance(){
+  state.advancing = true;
+  state.advanceTarget = rig.position.z - 55;   // move one cluster forward
+  state.sector++;
+  setSector();
+  // clear old dead guards
+  for(let i=guards.length-1;i>=0;i--){
+    if(!guards[i].userData.alive){ scene.remove(guards[i]); guards.splice(i,1); }
+  }
+}
+
+/* =========================================================
+   RESIZE
+========================================================= */
+addEventListener('resize', ()=>{
+  camera.aspect = innerWidth/innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* =========================================================
+   MAIN LOOP
+========================================================= */
+const clock = new THREE.Clock();
+let beaconBlink = 0;
+
+function animate(){
+  requestAnimationFrame(animate);
+  const dt = Math.min(clock.getDelta(), 0.05);
+  const t = clock.elapsedTime;
+
+  // water shimmer
+  waterMat.metalness = 0.85 + Math.sin(t*0.7)*0.05;
+
+  // beacon blink
+  beaconBlink += dt;
+  const on = (Math.sin(beaconBlink*4)>0);
+  beacons.forEach(b=> b.material.color.setHex(on?0xff2a2a:0x330808));
+
+  if(state.running){
+    // camera look
+    const targetYaw = state.yaw;
+    camera.rotation.order='YXZ';
+    camera.rotation.y = targetYaw;
+    camera.rotation.x = state.pitch + recoil*0.5;
+    // strafe stance
+    rig.position.x += (state.strafe*4 - rig.position.x*0) * 0 ; // no free x drift
+    rig.position.x = Math.max(-DOCK_W/2+3, Math.min(DOCK_W/2-3, rig.position.x + state.strafe*8*dt));
+
+    // recoil recover
+    recoil *= 0.82;
+    pistol.position.z = -0.6 + recoil;
+    pistol.userData.mflash.material.opacity *= 0.7;
+    muzzleLight.intensity *= 0.75;
+
+    // weapon idle sway
+    weapon.position.x = Math.sin(t*1.3)*0.008;
+    weapon.position.y = Math.sin(t*2.1)*0.006;
+
+    /* ---- AUTO ADVANCE MOVEMENT ---- */
+    if(state.advancing){
+      const speed = 10;
+      rig.position.z -= speed*dt;
+      // head bob
+      camera.position.y = 2.6 + Math.sin(t*10)*0.05;
+      // footsteps while walking
+      state.stepPhase += speed*dt;
+      if(state.stepPhase > 1.4){ state.stepPhase=0; footstep(false); }
+      if(rig.position.z <= state.advanceTarget){
+        state.advancing = false;
+        camera.position.y = 2.6;
+        spawnWave(rig.position.z - 25);
+        clearEl.textContent = 0;
+      }
+    } else {
+      camera.position.y = 2.6;
     }
 
-    function setupAudio() {
-        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        if (audioCtx.state === "suspended") audioCtx.resume();
+    /* ---- FOOTSTEP when passing a container cluster ---- */
+    for(const cz of clusters){
+      if(state.lastStepZ > cz && rig.position.z <= cz){
+        footstep(true);   // heavier step passing a container
+      }
     }
+    state.lastStepZ = rig.position.z;
 
-    // ---------------- SOUND DESIGN ----------------
-    function makeNoise(dur, decay) {
-        const len = Math.floor(audioCtx.sampleRate * dur);
-        const buf = audioCtx.createBuffer(1, len, audioCtx.sampleRate);
-        const d = buf.getChannelData(0);
-        for (let i = 0; i < len; i++) { d[i] = (Math.random()*2-1) * Math.pow(1 - i/len, decay); }
-        const src = audioCtx.createBufferSource(); src.buffer = buf; return src;
-    }
-
-    // realistic layered pistol shot: sharp crack + body thump + mechanical click
-    function gunshot() {
-        setupAudio(); if (!audioCtx) return;
-        const t = audioCtx.currentTime;
-
-        const noise = makeNoise(0.25, 2.2);
-        const bp = audioCtx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 1700; bp.Q.value = 0.8;
-        const hp = audioCtx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 380;
-        const ng = audioCtx.createGain(); ng.gain.setValueAtTime(0.95, t); ng.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
-        noise.connect(bp); bp.connect(hp); hp.connect(ng); ng.connect(audioCtx.destination);
-        noise.start(t); noise.stop(t + 0.25);
-
-        const thump = audioCtx.createOscillator(); thump.type = "triangle";
-        thump.frequency.setValueAtTime(170, t); thump.frequency.exponentialRampToValueAtTime(48, t + 0.13);
-        const tg = audioCtx.createGain(); tg.gain.setValueAtTime(0.8, t); tg.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
-        thump.connect(tg); tg.connect(audioCtx.destination); thump.start(t); thump.stop(t + 0.17);
-
-        const click = audioCtx.createOscillator(); click.type = "square"; click.frequency.setValueAtTime(2600, t);
-        const cg = audioCtx.createGain(); cg.gain.setValueAtTime(0.22, t); cg.gain.exponentialRampToValueAtTime(0.001, t + 0.03);
-        click.connect(cg); cg.connect(audioCtx.destination); click.start(t); click.stop(t + 0.04);
-    }
-
-    // synthesized human pained death shout (pitch/length randomised so it varies)
-    function deathShout() {
-        setupAudio(); if (!audioCtx) return;
-        const t = audioCtx.currentTime;
-        const base = 150 + Math.random() * 110;
-        const dur = 0.45 + Math.random() * 0.3;
-
-        const voice = audioCtx.createOscillator(); voice.type = "sawtooth";
-        voice.frequency.setValueAtTime(base * 1.15, t);
-        voice.frequency.linearRampToValueAtTime(base, t + 0.1);
-        voice.frequency.linearRampToValueAtTime(base * 0.55, t + dur);
-
-        const vib = audioCtx.createOscillator(); vib.frequency.value = 16 + Math.random()*8;
-        const vibg = audioCtx.createGain(); vibg.gain.value = 14;
-        vib.connect(vibg); vibg.connect(voice.frequency); vib.start(t); vib.stop(t + dur);
-
-        const fmt = audioCtx.createBiquadFilter(); fmt.type = "bandpass"; fmt.frequency.value = 950; fmt.Q.value = 5;
-        const vg = audioCtx.createGain();
-        vg.gain.setValueAtTime(0.001, t);
-        vg.gain.linearRampToValueAtTime(0.55, t + 0.05);
-        vg.gain.setValueAtTime(0.5, t + dur * 0.55);
-        vg.gain.exponentialRampToValueAtTime(0.001, t + dur);
-        voice.connect(fmt); fmt.connect(vg); vg.connect(audioCtx.destination);
-        voice.start(t); voice.stop(t + dur);
-
-        // breathy grit layer
-        const br = makeNoise(dur, 1.4);
-        const brf = audioCtx.createBiquadFilter(); brf.type = "bandpass"; brf.frequency.value = 1400; brf.Q.value = 1.2;
-        const brg = audioCtx.createGain(); brg.gain.setValueAtTime(0.18, t); brg.gain.exponentialRampToValueAtTime(0.001, t + dur);
-        br.connect(brf); brf.connect(brg); brg.connect(audioCtx.destination); br.start(t); br.stop(t + dur);
-    }
-
-    function sound(type) {
-        setupAudio(); if (!audioCtx) return;
-        if (type === "shot") { gunshot(); return; }
-        if (type === "shout") { deathShout(); return; }
-        let osc = audioCtx.createOscillator(), gain = audioCtx.createGain(); osc.connect(gain); gain.connect(audioCtx.destination);
-        if (type === "ding") { osc.type = "sine"; osc.frequency.setValueAtTime(950, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(1350, audioCtx.currentTime + 0.08); gain.gain.setValueAtTime(0.12, audioCtx.currentTime); osc.start(); osc.stop(audioCtx.currentTime + 0.08); }
-        else if (type === "level") { osc.type = "sine"; osc.frequency.setValueAtTime(523.25, audioCtx.currentTime); osc.frequency.setValueAtTime(659.25, audioCtx.currentTime + 0.1); osc.frequency.setValueAtTime(783.99, audioCtx.currentTime + 0.2); gain.gain.setValueAtTime(0.2, audioCtx.currentTime); osc.start(); osc.stop(audioCtx.currentTime + 0.4); }
-        else if (type === "bullet_crack") { osc.type = "sawtooth"; osc.frequency.setValueAtTime(190, audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(30, audioCtx.currentTime + 0.12); gain.gain.setValueAtTime(0.28, audioCtx.currentTime); osc.start(); osc.stop(audioCtx.currentTime + 0.12); }
-        else if (type === "heartbeat") { osc.type = "sine"; osc.frequency.setValueAtTime(60, audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(25, audioCtx.currentTime + 0.18); gain.gain.setValueAtTime(0.4, audioCtx.currentTime); osc.start(); osc.stop(audioCtx.currentTime + 0.18); }
-    }
-
-    function project3D(x, y, z) {
-        let relativeX = x - cameraX; let activePerspectiveZ = z - cameraZ;
-        if (activePerspectiveZ <= 0.1) return null;
-        let fovScale = 400 / activePerspectiveZ;
-        return { x: CX0 + (relativeX * fovScale), y: HORIZON - ((y - 1.6) * fovScale), size: fovScale };
-    }
-
-    function spawn3DThreatUnit() {
-        if (isOver || sectorClearing || isMoving) return;
-        if (threatsList.filter(t => !t.isDying).length >= 2) return;
-        if (winScreen.style.display === "flex" || document.getElementById("chapterOverlay").style.display === "flex") return;
-        let spawnZ = cameraZ + 10.5, spawnX = 0, tries = 0;
-        // keep enemies inside the visible corridor AND out of any container's shadow
-        do {
-            spawnX = cameraX + (Math.random() * 2 - 1) * CORRIDOR_HALF;
-            spawnZ = cameraZ + 9 + Math.random() * 3;
-            tries++;
-        } while (occludedBySpawn(spawnX, spawnZ) && tries < 12);
-        let ring = document.createElement("div"); ring.className = "target-ring"; gameArea.appendChild(ring);
-        threatsList.push({ x: spawnX, y: 0.2, z: spawnZ, age: 0, loopTick: Math.floor(Math.random()*60), isDying: false, deathTick: 0, deathDir: Math.random() < 0.5 ? -1 : 1, isFlashing: false, ring: ring, currentScreenX: 0, currentScreenY: 0, currentRadius: 24 });
-        sound("ding");
-    }
-
-    function aim(e) {
-        if (isOver || document.getElementById("chapterOverlay").style.display === "flex") return;
-        let targetPoint = e;
-        if (e.touches && e.touches.length > 0) { targetPoint = e.touches[0]; }
-        else if (e.changedTouches && e.changedTouches.length > 0) { targetPoint = e.changedTouches[0]; }
-        let bounds = gameArea.getBoundingClientRect();
-        currentX = (targetPoint.clientX - bounds.left) * (CW / bounds.width);
-        currentY = (targetPoint.clientY - bounds.top) * (CH / bounds.height);
-
-        let mappedThreatZ = 12; threatsList.forEach(t => { if(!t.isDying) mappedThreatZ = t.z - cameraZ; });
-        let dynamicallyAdjustedSize = Math.max(20, Math.min(64, (400 / mappedThreatZ) * 0.95));
-        sight.style.width = dynamicallyAdjustedSize + "px"; sight.style.height = dynamicallyAdjustedSize + "px";
-        sight.style.display = "block"; sight.style.left = currentX + "px"; sight.style.top = currentY + "px";
-    }
-
-    gameArea.addEventListener("mousemove", aim);
-    gameArea.addEventListener("touchmove", (e) => { e.preventDefault(); aim(e); }, { passive: false });
-
-    function triggerMouseCoordinateFire(e) {
-        setupAudio(); let bounds = gameArea.getBoundingClientRect();
-        currentX = (e.clientX - bounds.left) * (CW / bounds.width);
-        currentY = (e.clientY - bounds.top) * (CH / bounds.height);
-        triggerFire();
-    }
-    gameArea.addEventListener("mousedown", (e) => { if(e.target.tagName !== "BUTTON") triggerMouseCoordinateFire(e); });
-    gameArea.addEventListener("touchstart", (e) => { if(e.target.tagName !== "BUTTON") { e.preventDefault(); setupAudio(); aim(e); triggerFire(); } }, { passive: false });
-
-    function triggerSectorPathMovement() {
-        if (isMoving) return; isMoving = true; sectorClearing = false;
-        let idx = sectorsList.indexOf(currentSector);
-        if (idx >= 0 && idx < sectorsList.length - 1) {
-            currentSector = sectorsList[idx + 1]; sectorKills = 0; targetCameraZ = (idx + 1) * 16;
-            let roll = Math.random();
-            targetCameraX = roll < 0.33 ? -CORRIDOR_HALF : (roll < 0.66 ? CORRIDOR_HALF : 0.0);
-            chapterTxt.innerText = ["E","F","G","H","I","J"].includes(currentSector) ? "CH 1: CARGO WATERFRONT" : "CH 1: CONTAINER PORT";
-            document.getElementById("tutorialPopup").style.display = "none";
-        } else {
-            clearInterval(spawnTimerId); clearInterval(runLoopTimerId); isOver = true;
-            if(heartbeatIntervalId) { clearInterval(heartbeatIntervalId); heartbeatIntervalId = null; }
-            winScreen.style.display = "flex"; return;
-        }
-        let needed = sectorRequirements[currentSector]; targetTracker.innerText = "SECTOR " + currentSector + ": " + sectorKills + "/" + needed;
-        sound("level");
-    }
-
-    function triggerEnemyDamageStrike() {
-        if (isOver || winScreen.style.display === "flex" || isMoving || document.getElementById("chapterOverlay").style.display === "flex") return;
-        playerHp -= 12; if (playerHp < 0) playerHp = 0; healthBar.style.width = playerHp + "%"; sound("bullet_crack");
-        gameArea.classList.add("taking-damage"); setTimeout(() => gameArea.classList.remove("taking-damage"), 130);
-        if (playerHp <= 20 && !heartbeatIntervalId) { gameArea.classList.add("critical-pulse"); heartbeatIntervalId = setInterval(() => { sound("heartbeat"); }, 550); }
-        if (playerHp <= 0) { isOver = true; sound("bullet_crack"); clearInterval(spawnTimerId); clearInterval(runLoopTimerId); if(heartbeatIntervalId) { clearInterval(heartbeatIntervalId); gameArea.classList.remove("critical-pulse"); heartbeatIntervalId = null; } finalScore.innerText = "Final Score Log: " + score; overScreen.style.display = "flex"; }
-    }
-
-    function muzzleFX() {
-        // the muzzle tip is computed each frame by drawWeapon()
-        let mx = muzzleScreenX, my = muzzleScreenY;
-        flash.style.left = mx + "px"; flash.style.top = my + "px";
-        flash.style.display = "block"; setTimeout(() => { flash.style.display = "none"; }, 55);
-        recoil = 1; // kicks the pistol back; decays in drawWeapon()
-        for (let i = 0; i < 6; i++) smokeParticles.push({ x: mx + (Math.random()*10-5), y: my, vx: (Math.random()*1.2-0.6), vy: -0.8 - Math.random()*0.8, life: 1, r: 4 + Math.random()*4 });
-    }
-
-    function triggerFire() {
-        if (isOver || winScreen.style.display === "flex" || isMoving || document.getElementById("chapterOverlay").style.display === "flex") return;
-        document.getElementById("tutorialPopup").style.display = "none";
-
-        sound("shot"); muzzleFX();
-
-        let hitTarget = null; let lowestDistance = Infinity;
-        threatsList.forEach(t => {
-            if (t.isDying) return;
-            let d = Math.hypot(currentX - t.currentScreenX, currentY - t.currentScreenY);
-            if (d < t.currentRadius && d < lowestDistance) { lowestDistance = d; hitTarget = t; }
-        });
-        if (hitTarget) {
-            hitTarget.isDying = true; hitTarget.deathTick = 0;
-            sound("shout"); // enemy shouts on death
-            score += 100; scoreCounter.innerText = String(score).padStart(5, '0'); sectorKills += 1;
-            let needed = sectorRequirements[currentSector]; targetTracker.innerText = "SECTOR " + currentSector + ": " + Math.min(sectorKills, needed) + "/" + needed;
-            hitTarget.ring.style.opacity = "0";
-            // blood spray
-            for (let i = 0; i < 16; i++) bloodParticles.push({ x: hitTarget.currentScreenX, y: hitTarget.currentScreenY, vx: (Math.random()*6-3), vy: (Math.random()*-4-1), life: 1, r: 2 + Math.random()*2.5 });
-            // Fix: begin sector clear only when the quota is met; the actual
-            // advance waits until every enemy (dying included) has left the field.
-            if (sectorKills >= needed) {
-                sectorClearing = true;
-                if (spawnTimerId) { clearInterval(spawnTimerId); spawnTimerId = null; }
+    /* ---- GUARD AI ---- */
+    guards.forEach(gd=>{
+      const u = gd.userData;
+      if(u.alive){
+        // face player
+        gd.lookAt(rig.position.x, gd.position.y, rig.position.z);
+        u.wobble += dt;
+        gd.position.x += Math.sin(u.wobble*0.6)*0.004;
+        // flash decay
+        u.flash.material.opacity *= 0.6;
+        // shoot at player when in range and roughly ahead
+        const dz = gd.position.z - rig.position.z;
+        if(dz < 0 && dz > -60){
+          u.fireTimer -= dt;
+          if(u.fireTimer<=0){
+            u.fireTimer = u.fireCd;
+            u.flash.material.opacity = 1;
+            // chance to hit player
+            if(Math.random()<0.5 && !state.advancing){
+              state.hp = Math.max(0, state.hp - (6+Math.random()*8));
+              renderHP(); hurtSound();
+              dmgEl.style.boxShadow='inset 0 0 120px rgba(255,0,0,.55)';
+              setTimeout(()=> dmgEl.style.boxShadow='inset 0 0 0 rgba(255,0,0,0)', 120);
+              if(state.hp<=0) gameOver();
             }
+          }
         }
+      } else if(u.dying){
+        // ragdoll drop
+        u.vy = (u.vy||0) - 9*dt;
+        gd.position.y += u.vy*dt;
+        gd.rotation.z += 2.4*dt;
+        if(gd.position.y < -1.2){ u.dying=false; gd.visible=false; }
+      }
+    });
+
+    /* ---- puffs ---- */
+    for(let i=puffs.length-1;i>=0;i--){
+      const g=puffs[i]; g.userData.life-=dt;
+      g.children.forEach(p=>{ p.position.addScaledVector(p.userData.v, dt); p.material.opacity=Math.max(0,g.userData.life*2); });
+      if(g.userData.life<=0){ scene.remove(g); puffs.splice(i,1); }
     }
+  }
 
-    // ---------------- DRAWING HELPERS ----------------
-    function drawContainer(b) {
-        let p = project3D(b.x, b.y, b.z); if (!p) return;
-        let w = 2.6 * p.size, h = 2.4 * p.size;
-        let fx = p.x - w/2, fy = p.y - h/2;
-        let depth = 0.5 * p.size * b.side; // side face offset
+  renderer.render(scene, camera);
+}
 
-        // soft depth-of-field falloff for crates far down the corridor
-        let distFromCam = b.z - cameraZ;
-        let dofBlur = Math.max(0, Math.min(2.2, (distFromCam - 46) / 22));
-        ctx.save();
-        if (dofBlur > 0.05) ctx.filter = "blur(" + dofBlur.toFixed(2) + "px)";
+function gameOver(){
+  state.running=false;
+  document.exitPointerLock?.();
+  overlay.classList.remove('hidden');
+  overlay.querySelector('h1').textContent='YOU WERE DOWNED';
+  overlay.querySelectorAll('p')[0].innerHTML = 'Final score: <b>'+state.score+'</b> · Sectors cleared: <b>'+state.sector+'</b>';
+  overlay.querySelectorAll('p')[1].textContent = 'Regroup and run the waterfront again.';
+  startBtn.textContent='REDEPLOY';
+}
 
-        // grounding shadow so the crate doesn't float
-        drawGroundAO(fx + w/2, fy + h + p.size * 0.06, w * 0.62, Math.max(3, p.size * 0.16));
-
-        // side face (gives it 3D volume)
-        ctx.fillStyle = b.topColor;
-        ctx.beginPath();
-        ctx.moveTo(fx + (b.side > 0 ? w : 0), fy);
-        ctx.lineTo(fx + (b.side > 0 ? w : 0) + depth, fy - Math.abs(depth)*0.5);
-        ctx.lineTo(fx + (b.side > 0 ? w : 0) + depth, fy + h - Math.abs(depth)*0.5);
-        ctx.lineTo(fx + (b.side > 0 ? w : 0), fy + h);
-        ctx.closePath(); ctx.fill();
-
-        // top face
-        ctx.fillStyle = shade(b.baseColor, 1.25);
-        ctx.beginPath();
-        ctx.moveTo(fx, fy); ctx.lineTo(fx + w, fy);
-        ctx.lineTo(fx + w + depth, fy - Math.abs(depth)*0.5);
-        ctx.lineTo(fx + depth, fy - Math.abs(depth)*0.5);
-        ctx.closePath(); ctx.fill();
-        ctx.save(); ctx.clip();
-        let topSheen = ctx.createLinearGradient(fx, fy - Math.abs(depth)*0.5, fx + w, fy);
-        topSheen.addColorStop(0, "rgba(255,255,255,0.22)"); topSheen.addColorStop(0.5, "rgba(255,255,255,0.02)"); topSheen.addColorStop(1, "rgba(255,255,255,0.16)");
-        ctx.fillStyle = topSheen; ctx.fillRect(fx - 10, fy - h, w + depth + 20, h);
-        ctx.restore();
-
-        // front face base
-        ctx.fillStyle = b.baseColor; ctx.fillRect(fx, fy, w, h);
-        // vertical light falloff: brighter near the top (sky/floodlight), darker toward the ground (AO)
-        let faceGrd = ctx.createLinearGradient(fx, fy, fx, fy + h);
-        faceGrd.addColorStop(0, "rgba(255,255,255,0.10)");
-        faceGrd.addColorStop(0.35, "rgba(255,255,255,0)");
-        faceGrd.addColorStop(1, "rgba(0,0,0,0.30)");
-        ctx.fillStyle = faceGrd; ctx.fillRect(fx, fy, w, h);
-        // corrugation ribs
-        let ribs = 10;
-        for (let i = 0; i < ribs; i++) {
-            ctx.fillStyle = (i % 2 === 0) ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.06)";
-            ctx.fillRect(fx + (i/ribs)*w, fy + h*0.08, (w/ribs)*0.55, h*0.84);
-        }
-        // key-light rim on the edge facing the light source (moon/floodlight sits camera-left-ish)
-        let rimEdgeX = b.side > 0 ? fx : fx + w;
-        drawRimStroke(rimEdgeX, fy + h*0.03, rimEdgeX, fy + h*0.97, Math.max(1.2, p.size*0.035), "rgba(190,225,255,0.55)", 0.6);
-        // top + bottom rails
-        ctx.fillStyle = b.topColor; ctx.fillRect(fx, fy, w, h*0.09); ctx.fillRect(fx, fy + h*0.91, w, h*0.09);
-        // corner castings
-        ctx.fillStyle = "#0b0d10";
-        ctx.fillRect(fx, fy, w*0.09, h*0.09); ctx.fillRect(fx + w*0.91, fy, w*0.09, h*0.09);
-        ctx.fillRect(fx, fy + h*0.91, w*0.09, h*0.09); ctx.fillRect(fx + w*0.91, fy + h*0.91, w*0.09, h*0.09);
-        // doors: two vertical locking rods
-        ctx.strokeStyle = "rgba(0,0,0,0.5)"; ctx.lineWidth = Math.max(1, p.size*0.03);
-        ctx.beginPath(); ctx.moveTo(fx + w*0.35, fy + h*0.1); ctx.lineTo(fx + w*0.35, fy + h*0.9);
-        ctx.moveTo(fx + w*0.65, fy + h*0.1); ctx.lineTo(fx + w*0.65, fy + h*0.9); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(fx + w*0.5, fy + h*0.1); ctx.lineTo(fx + w*0.5, fy + h*0.9); ctx.stroke();
-        // faded stencil label
-        if (p.size > 26) {
-            ctx.fillStyle = "rgba(255,255,255,0.55)"; ctx.font = "bold " + Math.floor(p.size*0.28) + "px monospace";
-            ctx.textAlign = "center"; ctx.fillText(b.label, fx + w*0.5, fy + h*0.5);
-        }
-        ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.lineWidth = Math.max(1.5, p.size*0.04); ctx.strokeRect(fx, fy, w, h);
-
-        // stacked container on top
-        if (b.stack) {
-            let sy = fy - h*0.98;
-            ctx.fillStyle = shade(b.baseColor, 0.8); ctx.fillRect(fx + w*0.05, sy, w*0.9, h*0.9);
-            for (let i = 0; i < 9; i++) { ctx.fillStyle = (i%2===0)?"rgba(0,0,0,0.16)":"rgba(255,255,255,0.05)"; ctx.fillRect(fx + w*0.05 + (i/9)*w*0.9, sy + h*0.08, (w*0.9/9)*0.55, h*0.72); }
-            ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.strokeRect(fx + w*0.05, sy, w*0.9, h*0.9);
-        }
-        ctx.restore();
-    }
-
-    function shade(hex, f) {
-        let c = hex.replace('#',''); let r = parseInt(c.substr(0,2),16), g = parseInt(c.substr(2,2),16), b = parseInt(c.substr(4,2),16);
-        r = Math.min(255, Math.floor(r*f)); g = Math.min(255, Math.floor(g*f)); b = Math.min(255, Math.floor(b*f));
-        return "rgb(" + r + "," + g + "," + b + ")";
-    }
-
-    // ---------------- LIGHTING HELPERS ----------------
-    // soft multi-layer contact shadow so objects feel grounded instead of pasted on
-    function drawGroundAO(cx, groundY, rx, ry) {
-        ctx.save();
-        let g = ctx.createRadialGradient(cx, groundY, 0, cx, groundY, rx);
-        g.addColorStop(0, "rgba(0,0,0,0.55)"); g.addColorStop(0.6, "rgba(0,0,0,0.28)"); g.addColorStop(1, "rgba(0,0,0,0)");
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.ellipse(cx, groundY, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
-        ctx.restore();
-    }
-    // thin bright stroke along one edge of a rect to fake a key-light rim (moon/floodlight)
-    function drawRimStroke(x1, y1, x2, y2, width, color, alpha) {
-        ctx.save();
-        ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = "round";
-        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
-        ctx.restore();
-    }
-
-    function roundRectPath(x, y, w, h, r) {
-        ctx.beginPath();
-        ctx.moveTo(x + r, y);
-        ctx.arcTo(x + w, y, x + w, y + h, r);
-        ctx.arcTo(x + w, y + h, x, y + h, r);
-        ctx.arcTo(x, y + h, x, y, r);
-        ctx.arcTo(x, y, x + w, y, r);
-        ctx.closePath();
-    }
-
-    // A moored container ship sitting IN the water at the given waterline y.
-    function drawCargoShip(sx, waterY) {
-        let bob = Math.sin(cycleTick * 0.8) * 2;         // gentle rocking
-        let y = waterY + bob;
-        let hullTop = y - 26, hullLen = 170, x = sx;
-
-        // --- reflection first, below the waterline (drawn faint + wavy) ---
-        ctx.save();
-        ctx.globalAlpha = 0.22;
-        ctx.translate(0, waterY * 2);
-        ctx.scale(1, -1);
-        ctx.fillStyle = "#1a2733"; ctx.fillRect(x, hullTop, hullLen, 24);
-        ctx.fillStyle = "#243b4a";
-        ctx.fillRect(x + 28, hullTop - 26, 20, 26); ctx.fillRect(x + 58, hullTop - 22, 18, 22); ctx.fillRect(x + 92, hullTop - 30, 22, 30);
-        ctx.restore();
-
-        // --- hull ---
-        ctx.fillStyle = "#0d1720";
-        ctx.beginPath();
-        ctx.moveTo(x, hullTop);
-        ctx.lineTo(x + hullLen, hullTop);
-        ctx.lineTo(x + hullLen - 14, y + 6);
-        ctx.lineTo(x + 12, y + 6);
-        ctx.closePath(); ctx.fill();
-        // hull waterline stripe + boot topping
-        ctx.fillStyle = "#7f1d1d"; ctx.fillRect(x + 12, y - 2, hullLen - 26, 5);
-        ctx.fillStyle = "#111c26"; ctx.fillRect(x, hullTop, hullLen, 6);
-
-        // --- deck cargo: stacked container blocks ---
-        let cols = ["#0f766e","#b45309","#1d4ed8","#475569","#b91c1c","#0f766e"];
-        for (let i = 0; i < 6; i++) {
-            let bx = x + 14 + i * 24, by = hullTop - 16, bw = 20, bh = 16;
-            ctx.fillStyle = shade(cols[i], 0.7); ctx.fillRect(bx, by, bw, bh);
-            ctx.fillStyle = shade(cols[i], 1.0); ctx.fillRect(bx, by, bw, 4);
-            if (i % 2 === 0) { ctx.fillStyle = shade(cols[i], 0.55); ctx.fillRect(bx + 2, by - 14, bw - 4, 14); }
-        }
-
-        // --- superstructure (bridge) near the stern ---
-        ctx.fillStyle = "#243b4a"; ctx.fillRect(x + hullLen - 44, hullTop - 34, 30, 34);
-        ctx.fillStyle = "#cfe4ff"; // lit bridge windows
-        for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) ctx.fillRect(x + hullLen - 41 + c*7, hullTop - 30 + r*9, 4, 4);
-        // funnel
-        ctx.fillStyle = "#111c26"; ctx.fillRect(x + hullLen - 26, hullTop - 48, 10, 16);
-        ctx.fillStyle = "#b45309"; ctx.fillRect(x + hullLen - 26, hullTop - 48, 10, 5);
-        // mast light
-        ctx.fillStyle = "rgba(255,80,80,0.9)"; ctx.beginPath(); ctx.arc(x + 8, hullTop - 22, 2, 0, Math.PI*2); ctx.fill();
-    }
-
-    // ---------- FIRST-PERSON PISTOL (drawn on canvas, bottom-right) ----------
-    function drawWeapon() {
-        recoil *= 0.78; if (recoil < 0.01) recoil = 0;
-        let swayX = (currentX - CX0) * 0.05, swayY = (currentY - HORIZON) * 0.03;
-        let px = CW - 92 + swayX, py = CH - 6 + swayY + recoil * 12;
-        let A = -0.30; // tilt so the barrel points up toward the reticle
-        ctx.save();
-        ctx.translate(px, py);
-        ctx.rotate(A);
-
-        // local helper: fill a rounded rect in the rotated frame
-        let rr = (x,y,w,h,r,fill) => { roundRectPath(x,y,w,h,r); ctx.fillStyle = fill; ctx.fill(); };
-
-        // barrel + slide gradient
-        let slideGrd = ctx.createLinearGradient(0, -104, 0, -66);
-        slideGrd.addColorStop(0, "#565d68"); slideGrd.addColorStop(0.5, "#2b3037"); slideGrd.addColorStop(1, "#12151a");
-        // frame
-        rr(-150, -66, 196, 20, 5, "#1b1f25");
-        // slide (top) with rounded nose
-        roundRectPath(-158, -100, 208, 36, 7); ctx.fillStyle = slideGrd; ctx.fill();
-        // slide top highlight
-        ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(-150, -98, 190, 4);
-        // brushed-metal micro streaks
-        ctx.save();
-        roundRectPath(-158, -100, 208, 36, 7); ctx.clip();
-        ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
-        for (let i = -155; i < 45; i += 3) { ctx.beginPath(); ctx.moveTo(i, -99); ctx.lineTo(i, -65); ctx.stroke(); }
-        // slow-moving specular sweep so the metal catches light as it sways
-        let sweepX = -155 + ((cycleTick * 26) % 260);
-        let sweepGrd = ctx.createLinearGradient(sweepX - 22, 0, sweepX + 22, 0);
-        sweepGrd.addColorStop(0, "rgba(255,255,255,0)"); sweepGrd.addColorStop(0.5, "rgba(255,255,255,0.22)"); sweepGrd.addColorStop(1, "rgba(255,255,255,0)");
-        ctx.fillStyle = sweepGrd; ctx.fillRect(sweepX - 22, -100, 44, 36);
-        ctx.restore();
-        // ejection port
-        ctx.fillStyle = "#05070a"; ctx.fillRect(-40, -92, 34, 16);
-        // rear serrations
-        ctx.fillStyle = "#0c0e12"; for (let i = 0; i < 6; i++) ctx.fillRect(22 - i*7, -96, 3, 28);
-        // front + rear iron sights
-        ctx.fillStyle = "#0a0b0d"; ctx.fillRect(-150, -110, 7, 12); ctx.fillRect(36, -112, 12, 14);
-        ctx.fillStyle = "#22e0a1"; ctx.beginPath(); ctx.arc(-146, -105, 2, 0, Math.PI*2); ctx.fill();
-        // muzzle opening
-        ctx.fillStyle = "#04060a"; ctx.beginPath(); ctx.arc(-152, -82, 6, 0, Math.PI*2); ctx.fill();
-
-        // trigger guard
-        ctx.strokeStyle = "#15181d"; ctx.lineWidth = 7; ctx.beginPath(); ctx.arc(0, -34, 17, -0.2, Math.PI + 0.6); ctx.stroke();
-        // trigger
-        ctx.strokeStyle = "#3a3f47"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(2, -40, 8, 0.4, 2.0); ctx.stroke();
-
-        // grip (polymer) angled down-right from the frame
-        let gripGrd = ctx.createLinearGradient(6, -50, 60, 70);
-        gripGrd.addColorStop(0, "#2b2f36"); gripGrd.addColorStop(1, "#101216");
-        ctx.save(); ctx.translate(30, -46); ctx.rotate(0.34);
-        roundRectPath(-4, 0, 52, 128, 14); ctx.fillStyle = gripGrd; ctx.fill();
-        // stippling
-        ctx.fillStyle = "rgba(255,255,255,0.10)";
-        for (let gy = 16; gy < 104; gy += 9) for (let gx = 4; gx < 42; gx += 8) { ctx.beginPath(); ctx.arc(gx, gy, 1.1, 0, Math.PI*2); ctx.fill(); }
-        // magazine base
-        ctx.fillStyle = "#0a0c10"; roundRectPath(-6, 120, 56, 12, 4); ctx.fill();
-        ctx.restore();
-
-        // --- hand gripping the pistol ---
-        let skin = "#c9a074", skinDark = "#a97e54";
-        ctx.save(); ctx.translate(30, -46); ctx.rotate(0.34);
-        // palm / back of hand
-        ctx.fillStyle = skin; roundRectPath(30, 6, 40, 74, 16); ctx.fill();
-        // thumb wrapping toward the frame
-        ctx.fillStyle = skinDark; roundRectPath(4, 2, 26, 20, 10); ctx.fill();
-        // knuckles / fingers wrapping the front of the grip
-        ctx.fillStyle = skin;
-        for (let f = 0; f < 4; f++) { roundRectPath(-8, 14 + f*22, 44, 18, 9); ctx.fill(); }
-        ctx.fillStyle = "rgba(0,0,0,0.18)";
-        for (let f = 1; f < 4; f++) ctx.fillRect(-8, 14 + f*22 - 2, 44, 2);
-        ctx.restore();
-
-        // compute the muzzle tip in screen space for the flash/smoke
-        let cosA = Math.cos(A), sinA = Math.sin(A);
-        let lx = -152, ly = -82;
-        muzzleScreenX = px + lx * cosA - ly * sinA;
-        muzzleScreenY = py + lx * sinA + ly * cosA;
-
-        ctx.restore();
-    }
-
-    function drawSoldier(t) {
-        let p = project3D(t.x, t.y, t.z); if (!p) return;
-        let peek = (Math.sin(t.loopTick * 0.05) + 1) / 2; let isOut = peek > 0.45;
-        let s = p.size * 0.5;
-        let cx = p.x - (s * 1.7) + (s * 1.7 * peek);
-        let feetY = p.y + s * 0.4;
-        t.currentScreenX = cx; t.currentScreenY = feetY - s * 1.0; t.currentRadius = s * 1.25;
-
-        if (!t.isDying) { if (isOut) { t.ring.style.opacity = "1"; t.age++; } else { t.ring.style.opacity = "0"; } }
-        if (!t.isDying && t.age > 55 && t.age % 78 === 0 && !isMoving && isOut && !sectorClearing && !occludedBySpawn(t.x, t.z)) {
-            t.isFlashing = true; triggerEnemyDamageStrike(); setTimeout(() => { t.isFlashing = false; }, 90);
-        }
-
-        ctx.save();
-        if (t.isDying) {
-            let dp = Math.min(1, t.deathTick / 20);
-            ctx.globalAlpha = 1 - dp * 0.95;
-            ctx.translate(cx, feetY); ctx.rotate(dp * t.deathDir * 1.3); ctx.translate(-cx, -feetY);
-        }
-
-        // ground shadow
-        drawGroundAO(cx, feetY + s*0.06, s*0.75, s*0.2);
-
-        // legs
-        ctx.fillStyle = "#243027";
-        ctx.fillRect(cx - s*0.34, feetY - s*0.55, s*0.28, s*0.6);
-        ctx.fillRect(cx + s*0.06, feetY - s*0.55, s*0.28, s*0.6);
-        // boots
-        ctx.fillStyle = "#0c0e0b"; ctx.fillRect(cx - s*0.36, feetY - s*0.05, s*0.32, s*0.14); ctx.fillRect(cx + s*0.04, feetY - s*0.05, s*0.32, s*0.14);
-
-        // torso / tactical vest
-        ctx.fillStyle = "#2f3a2b"; ctx.fillRect(cx - s*0.42, feetY - s*1.35, s*0.84, s*0.85);
-        ctx.fillStyle = "#1c241a"; ctx.fillRect(cx - s*0.42, feetY - s*1.35, s*0.84, s*0.85); // base
-        ctx.fillStyle = "#3c4a35"; ctx.fillRect(cx - s*0.38, feetY - s*1.3, s*0.76, s*0.75); // vest plate
-        // vest light falloff (top catches ambient light, bottom sinks into shadow)
-        let vestGrd = ctx.createLinearGradient(cx, feetY - s*1.3, cx, feetY - s*0.55);
-        vestGrd.addColorStop(0, "rgba(255,255,255,0.14)"); vestGrd.addColorStop(0.4, "rgba(255,255,255,0)"); vestGrd.addColorStop(1, "rgba(0,0,0,0.32)");
-        ctx.fillStyle = vestGrd; ctx.fillRect(cx - s*0.38, feetY - s*1.3, s*0.76, s*0.75);
-        // vest pouches + straps
-        ctx.fillStyle = "#20281c";
-        ctx.fillRect(cx - s*0.3, feetY - s*0.95, s*0.24, s*0.22);
-        ctx.fillRect(cx + s*0.06, feetY - s*0.95, s*0.24, s*0.22);
-        ctx.strokeStyle = "#12160f"; ctx.lineWidth = Math.max(1, s*0.05);
-        ctx.beginPath(); ctx.moveTo(cx - s*0.2, feetY - s*1.3); ctx.lineTo(cx - s*0.2, feetY - s*0.55);
-        ctx.moveTo(cx + s*0.2, feetY - s*1.3); ctx.lineTo(cx + s*0.2, feetY - s*0.55); ctx.stroke();
-        // rim light along the silhouette edge closest to camera (mimics moon/flood backlight)
-        drawRimStroke(cx - s*0.42, feetY - s*1.3, cx - s*0.42, feetY - s*0.5, Math.max(1, s*0.045), "rgba(200,230,255,0.5)", 0.55);
-
-        // arms
-        ctx.fillStyle = "#2f3a2b";
-        ctx.fillRect(cx - s*0.55, feetY - s*1.25, s*0.2, s*0.6);
-        ctx.fillRect(cx + s*0.35, feetY - s*1.25, s*0.2, s*0.55);
-
-        // rifle pointed toward the player (down/front)
-        ctx.save();
-        ctx.translate(cx + s*0.1, feetY - s*0.95); ctx.rotate(0.55);
-        ctx.fillStyle = "#111"; ctx.fillRect(-s*0.1, 0, s*1.15, s*0.14);      // barrel
-        ctx.fillStyle = "#1b1b1b"; ctx.fillRect(-s*0.1, s*0.05, s*0.55, s*0.28); // body
-        ctx.fillStyle = "#0a0a0a"; ctx.fillRect(-s*0.02, s*0.3, s*0.16, s*0.34); // magazine
-        // muzzle flash when firing
-        if (t.isFlashing && isOut && !t.isDying) {
-            let g = ctx.createRadialGradient(s*1.1, s*0.07, 1, s*1.1, s*0.07, s*0.4);
-            g.addColorStop(0, "#fffbe6"); g.addColorStop(0.5, "#ffb020"); g.addColorStop(1, "transparent");
-            ctx.fillStyle = g; ctx.beginPath(); ctx.arc(s*1.1, s*0.07, s*0.4, 0, Math.PI*2); ctx.fill();
-        }
-        ctx.restore();
-
-        // neck + head
-        ctx.fillStyle = "#c79a6b"; ctx.fillRect(cx - s*0.1, feetY - s*1.45, s*0.2, s*0.16);
-        let headGrd = ctx.createRadialGradient(cx - s*0.12, feetY - s*1.7, s*0.05, cx, feetY - s*1.62, s*0.32);
-        headGrd.addColorStop(0, "#e6c49a"); headGrd.addColorStop(0.7, "#d4b38a"); headGrd.addColorStop(1, "#a9805a");
-        ctx.fillStyle = headGrd; ctx.beginPath(); ctx.arc(cx, feetY - s*1.62, s*0.3, 0, Math.PI*2); ctx.fill();
-        // helmet
-        let helmGrd = ctx.createLinearGradient(cx - s*0.34, feetY - s*1.98, cx + s*0.34, feetY - s*1.68);
-        helmGrd.addColorStop(0, "#3a4732"); helmGrd.addColorStop(0.5, "#2a3325"); helmGrd.addColorStop(1, "#161c12");
-        ctx.fillStyle = helmGrd; ctx.beginPath(); ctx.arc(cx, feetY - s*1.68, s*0.34, Math.PI, 0); ctx.fill();
-        ctx.fillRect(cx - s*0.34, feetY - s*1.7, s*0.68, s*0.1);
-        ctx.fillStyle = "#1a2016"; ctx.fillRect(cx + s*0.1, feetY - s*1.74, s*0.28, s*0.05); // helmet accessory rail
-        // helmet rim light catching the key light
-        drawRimStroke(cx - s*0.33, feetY - s*1.95, cx - s*0.12, feetY - s*1.98, Math.max(1, s*0.04), "rgba(210,235,255,0.7)", 0.6);
-        // visor / eyes
-        ctx.fillStyle = "#0b0d0a"; ctx.fillRect(cx - s*0.2, feetY - s*1.6, s*0.4, s*0.08);
-
-        // hit flash overlay
-        if (t.isFlashing && isOut && !t.isDying) {
-            ctx.fillStyle = "rgba(255,90,60,0.25)"; ctx.fillRect(cx - s*0.5, feetY - s*1.8, s*1.0, s*1.8);
-        }
-        ctx.restore();
-
-        // ring follows the head/upper body
-        t.ring.style.left = cx + "px"; t.ring.style.top = (feetY - s*1.0) + "px";
-        let dyn = Math.max(18, Math.min(120, 100 * (1.3 - (t.age / 40))));
-        t.ring.style.width = dyn + "px"; t.ring.style.height = dyn + "px";
-    }
-
-    function drawParticles() {
-        // blood
-        for (let i = bloodParticles.length - 1; i >= 0; i--) {
-            let pt = bloodParticles[i]; pt.x += pt.vx; pt.y += pt.vy; pt.vy += 0.35; pt.life -= 0.035;
-            if (pt.life <= 0) { bloodParticles.splice(i, 1); continue; }
-            ctx.fillStyle = "rgba(150,10,10," + Math.max(0, pt.life) + ")";
-            ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI*2); ctx.fill();
-        }
-        // muzzle smoke
-        for (let i = smokeParticles.length - 1; i >= 0; i--) {
-            let pt = smokeParticles[i]; pt.x += pt.vx; pt.y += pt.vy; pt.vy -= 0.02; pt.life -= 0.04; pt.r += 0.6;
-            if (pt.life <= 0) { smokeParticles.splice(i, 1); continue; }
-            ctx.fillStyle = "rgba(200,200,205," + Math.max(0, pt.life*0.4) + ")";
-            ctx.beginPath(); ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI*2); ctx.fill();
-        }
-    }
-
-    function render3DSceneGrid() {
-        if (document.getElementById("chapterOverlay").style.display === "flex") return;
-        cycleTick += 0.05; cameraZ += (targetCameraZ - cameraZ) * 0.07; cameraX += (targetCameraX - cameraX) * 0.07;
-        if (isMoving && Math.abs(cameraZ - targetCameraZ) < 0.1) { isMoving = false; }
-        if (!spawnTimerId && !isOver && !sectorClearing && !isMoving) { spawnTimerId = setInterval(spawn3DThreatUnit, 1350); }
-
-        // advance ONLY once quota is met AND every enemy has left the field
-        if (sectorClearing && !isMoving && threatsList.length === 0) { triggerSectorPathMovement(); }
-
-        let isOutdoorSector = ["E","F","G","H","I","J"].includes(currentSector);
-        ctx.clearRect(0, 0, CW, CH);
-
-        if (isOutdoorSector) {
-            let skyGrd = ctx.createLinearGradient(0, 0, 0, HORIZON); skyGrd.addColorStop(0, "#070b1c"); skyGrd.addColorStop(0.5, "#101a33"); skyGrd.addColorStop(1, "#33314e"); ctx.fillStyle = skyGrd; ctx.fillRect(0, 0, CW, HORIZON);
-            // moon + soft halo
-            ctx.fillStyle = "rgba(240,240,220,0.16)"; ctx.beginPath(); ctx.arc(322, 58, 40, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "rgba(245,245,225,0.95)"; ctx.beginPath(); ctx.arc(322, 58, 20, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "rgba(255,255,255,0.8)"; for (let i = 1; i <= 34; i++) { let sX = (i * 73) % CW; let sY = (i * 37) % 200; let tw = Math.abs(Math.sin(cycleTick + i)) * 1.6; ctx.fillRect(sX, sY, tw, tw); }
-
-            // waterline is at the horizon; the ship hull sits IN the sea
-            let waterTop = HORIZON - 4;
-            drawCargoShip(150 - (cameraX * 22), waterTop);
-            // faint atmospheric haze where sky meets water
-            let seaHaze = ctx.createLinearGradient(0, waterTop - 36, 0, waterTop + 14);
-            seaHaze.addColorStop(0, "rgba(200,210,225,0)"); seaHaze.addColorStop(1, "rgba(200,210,225,0.14)");
-            ctx.fillStyle = seaHaze; ctx.fillRect(0, waterTop - 36, CW, 50);
-
-            // sea surface
-            let seaGrd = ctx.createLinearGradient(0, waterTop, 0, CH); seaGrd.addColorStop(0, "#0c2f3a"); seaGrd.addColorStop(0.4, "#08222c"); seaGrd.addColorStop(1, "#02121a"); ctx.fillStyle = seaGrd; ctx.fillRect(0, waterTop, CW, CH - waterTop);
-            // moon glitter path on the water
-            let glitGrd = ctx.createLinearGradient(0, waterTop, 0, CH); glitGrd.addColorStop(0, "rgba(240,240,205,0.35)"); glitGrd.addColorStop(1, "rgba(240,240,205,0)"); ctx.fillStyle = glitGrd; ctx.beginPath(); ctx.moveTo(300, waterTop); ctx.lineTo(344, waterTop); ctx.lineTo(372, CH); ctx.lineTo(272, CH); ctx.closePath(); ctx.fill();
-            // layered animated waves (denser + brighter near the camera for depth)
-            for (let waveY = waterTop + 10; waveY < CH; waveY += 16) {
-                let depth = (waveY - waterTop) / (CH - waterTop);
-                ctx.strokeStyle = "rgba(120, 210, 200," + (0.06 + depth*0.24) + ")"; ctx.lineWidth = 1 + depth*1.6;
-                ctx.beginPath(); let amp = 3 + depth*10; let ws = Math.sin(cycleTick*1.4 + waveY*0.4) * amp;
-                ctx.moveTo(0, waveY + ws);
-                ctx.bezierCurveTo(CW*0.33, waveY - amp + ws, CW*0.66, waveY + amp + ws, CW, waveY + ws*0.6);
-                ctx.stroke();
-            }
-        } else {
-            let sky = ctx.createLinearGradient(0,0,0,HORIZON); sky.addColorStop(0,"#0b1220"); sky.addColorStop(1,"#0a1a1f"); ctx.fillStyle = sky; ctx.fillRect(0,0,CW,HORIZON);
-            // gantry crane silhouette against the night sky (far background, adds scale)
-            ctx.save(); ctx.globalAlpha = 0.5; ctx.strokeStyle = "#0e1620"; ctx.fillStyle = "#0e1620"; ctx.lineWidth = 5;
-            ctx.beginPath(); ctx.moveTo(340, HORIZON - 4); ctx.lineTo(340, 30); ctx.lineTo(300, 8); ctx.lineTo(300, 30); ctx.moveTo(340,30); ctx.lineTo(400,30); ctx.stroke();
-            for (let i=0;i<5;i++){ ctx.fillRect(346 + i*10, 40 + i*6, 3, HORIZON-44-i*6); }
-            ctx.restore();
-            // warehouse floodlight volumetric beams (two crossing shafts, additive glow)
-            ctx.save(); ctx.globalCompositeOperation = "lighter";
-            let beam1 = ctx.createLinearGradient(60, 0, 190, HORIZON); beam1.addColorStop(0, "rgba(250,220,150,0.14)"); beam1.addColorStop(1, "rgba(250,220,150,0)");
-            ctx.fillStyle = beam1; ctx.beginPath(); ctx.moveTo(70,0); ctx.lineTo(150,0); ctx.lineTo(210,HORIZON); ctx.lineTo(40,HORIZON); ctx.closePath(); ctx.fill();
-            let beam2 = ctx.createLinearGradient(360, 0, 260, HORIZON); beam2.addColorStop(0, "rgba(180,220,255,0.10)"); beam2.addColorStop(1, "rgba(180,220,255,0)");
-            ctx.fillStyle = beam2; ctx.beginPath(); ctx.moveTo(330,0); ctx.lineTo(390,0); ctx.lineTo(370,HORIZON); ctx.lineTo(250,HORIZON); ctx.closePath(); ctx.fill();
-            ctx.restore();
-            // floodlight source glows
-            let src1 = ctx.createRadialGradient(110,4,1,110,4,30); src1.addColorStop(0,"rgba(255,244,210,0.55)"); src1.addColorStop(1,"rgba(255,244,210,0)");
-            ctx.fillStyle = src1; ctx.beginPath(); ctx.arc(110,4,30,0,Math.PI*2); ctx.fill();
-            ctx.fillStyle = "#050a0c"; ctx.fillRect(0, HORIZON, CW, CH);
-            // faint ground haze near the horizon for depth
-            let haze = ctx.createLinearGradient(0, HORIZON - 40, 0, HORIZON + 30);
-            haze.addColorStop(0, "rgba(180,200,210,0)"); haze.addColorStop(1, "rgba(180,200,210,0.10)");
-            ctx.fillStyle = haze; ctx.fillRect(0, HORIZON - 40, CW, 70);
-        }
-
-        // perspective floor
-        for (let z = 84; z >= 0; z -= 3) {
-            let zPos = Math.floor(cameraZ) + z; zPos = zPos - (zPos % 3);
-            let pNear = project3D(0, 0, zPos); let pFar = project3D(0, 0, zPos + 3); if (!pNear || !pFar) continue;
-            let fog = Math.min(1, z / 65); let ls = 1 - fog;
-            ctx.fillStyle = "rgba(" + Math.floor(22*ls) + "," + Math.floor(30*ls) + "," + Math.floor(40*ls) + ",1)";
-            ctx.beginPath(); ctx.moveTo(CX0 - (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.lineTo(CX0 + (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.lineTo(CX0 + (4.5 * pFar.size), HORIZON + (1.6 * pFar.size)); ctx.lineTo(CX0 - (4.5 * pFar.size), HORIZON + (1.6 * pFar.size)); ctx.fill();
-            ctx.strokeStyle = "rgba(45, 212, 191, 0.22)"; ctx.lineWidth = Math.max(1, pNear.size * 0.03); ctx.beginPath(); ctx.moveTo(CX0 - (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.lineTo(CX0 + (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.stroke();
-            if (isOutdoorSector) continue;
-            // warehouse walls
-            let ridge = Math.floor(zPos * 2.5) % 2 === 0;
-            ctx.fillStyle = "rgba(" + Math.floor((ridge?26:34)*ls) + "," + Math.floor((ridge?34:42)*ls) + "," + Math.floor((ridge?40:48)*ls) + ",1)";
-            ctx.beginPath(); ctx.moveTo(CX0 - (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.lineTo(CX0 - (4.5 * pNear.size), HORIZON - (2.4 * pNear.size)); ctx.lineTo(CX0 - (4.5 * pFar.size), HORIZON - (2.4 * pFar.size)); ctx.lineTo(CX0 - (4.5 * pFar.size), HORIZON + (1.6 * pFar.size)); ctx.fill();
-            ctx.beginPath(); ctx.moveTo(CX0 + (4.5 * pNear.size), HORIZON + (1.6 * pNear.size)); ctx.lineTo(CX0 + (4.5 * pNear.size), HORIZON - (2.4 * pNear.size)); ctx.lineTo(CX0 + (4.5 * pFar.size), HORIZON - (2.4 * pFar.size)); ctx.lineTo(CX0 + (4.5 * pFar.size), HORIZON + (1.6 * pFar.size)); ctx.fill();
-        }
-
-        // depth-sorted objects
-        let queue = [];
-        static3DObstacles.forEach(b => { if (b.z >= cameraZ) queue.push({ type: "crate", z: b.z, data: b }); });
-        threatsList.forEach(t => { if (t.z >= cameraZ) queue.push({ type: "enemy", z: t.z, data: t }); });
-        queue.sort((a, b) => b.z - a.z);
-        queue.forEach(item => {
-            if (item.type === "crate") drawContainer(item.data);
-            else {
-                let t = item.data; if (!isMoving && !t.isDying) t.loopTick++;
-                drawSoldier(t);
-                if (t.isDying) {
-                    t.deathTick++;
-                    if (t.deathTick > 22) { if (t.ring) t.ring.remove(); threatsList = threatsList.filter(x => x !== t); }
-                }
-            }
-        });
-
-        drawParticles();
-        if (!isOver) drawWeapon();
-    }
-
-    function initializeActiveArcadeGameplay() {
-        document.getElementById("chapterOverlay").style.display = "none";
-        if (currentSector === "A" && sectorKills === 0) { document.getElementById("tutorialPopup").style.display = "block"; }
-        scoreCounter.style.display = "block"; chapterTxt.style.display = "block"; targetTracker.style.display = "block"; document.getElementById("healthWrap").style.display = "block"; sight.style.display = "block";
-        runLoopTimerId = setInterval(render3DSceneGrid, 1000 / 45);
-    }
-
-    window.resetArcadeEngine = function(fullReset) {
-        if (spawnTimerId) { clearInterval(spawnTimerId); spawnTimerId = null; }
-        clearInterval(runLoopTimerId); if(heartbeatIntervalId) { clearInterval(heartbeatIntervalId); heartbeatIntervalId = null; }
-        document.querySelectorAll(".target-ring").forEach(el => el.remove()); threatsList = []; bloodParticles = []; smokeParticles = [];
-        cameraZ = 0; targetCameraZ = 0; cameraX = 0; targetCameraX = 0; currentSector = "A"; sectorKills = 0; sectorClearing = false; playerHp = 100; score = 200; isMoving = false; isOver = false;
-        winScreen.style.display = "none"; overScreen.style.display = "none";
-        gameArea.className = ""; healthBar.style.width = "100%"; scoreCounter.innerText = "00200"; chapterTxt.innerText = "CH 1: CONTAINER PORT";
-        let needed = sectorRequirements[currentSector]; targetTracker.innerText = "SECTOR " + currentSector + ": " + sectorKills + "/" + needed;
-
-        document.getElementById("chapterOverlay").style.display = "flex";
-        document.getElementById("tutorialPopup").style.display = "none";
-        scoreCounter.style.display = "none"; chapterTxt.style.display = "none"; targetTracker.style.display = "none"; document.getElementById("healthWrap").style.display = "none"; sight.style.display = "none";
-        setTimeout(initializeActiveArcadeGameplay, 3000);
-    };
-
-    setTimeout(initializeActiveArcadeGameplay, 3000);
+/* boot */
+loadingEl.classList.add('hidden');
+animate();
 </script>
 </body>
 </html>
-'''
+"""
 
-cb_id = random.randint(100000, 999999)
-st.markdown(f'<!-- Fixed Sound Tactical Injector Frame ID: {cb_id} -->', unsafe_allow_html=True)
-components.html(game_html, height=600, scrolling=False)
+components.html(GAME_HTML, height=900, scrolling=False)

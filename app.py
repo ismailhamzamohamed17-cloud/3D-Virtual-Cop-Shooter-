@@ -25,9 +25,10 @@ game_html = '''
     #gameArea::after {
         content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 28;
         background:
-            radial-gradient(120% 100% at 50% 40%, transparent 55%, rgba(0,0,0,0.55) 100%),
-            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
-        background-size: cover, 180px 180px; transition: background-color 0.1s;
+            radial-gradient(125% 105% at 50% 38%, transparent 48%, rgba(0,0,0,0.62) 100%),
+            radial-gradient(60% 40% at 50% 100%, rgba(0,0,0,0.35), transparent 70%),
+            url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.07'/%3E%3C/svg%3E");
+        background-size: cover, cover, 180px 180px; transition: background-color 0.1s;
     }
     #gameArea.taking-damage::after { background-color: rgba(200, 20, 20, 0.28); box-shadow: inset 0 0 130px rgba(200,0,0,0.95); }
     #gameArea.critical-pulse::after { animation: lowHp 0.55s ease-in-out infinite alternate; }
@@ -36,7 +37,19 @@ game_html = '''
         100% { box-shadow: inset 0 0 150px rgba(255,0,0,0.9); }
     }
 
-    canvas { position: absolute; top: 0; left: 0; width: 420px; height: 520px; z-index: 1; }
+    canvas {
+        position: absolute; top: 0; left: 0; width: 420px; height: 520px; z-index: 1;
+        /* cinematic teal-orange color grade + gentle contrast lift, purely CSS/GPU so it costs nothing per-frame */
+        filter: contrast(1.1) saturate(1.18) brightness(0.985) sepia(0.06) hue-rotate(-6deg);
+    }
+
+    /* soft chromatic-fringe + cool/warm split-tone at the frame edges, sits above the canvas */
+    #gameArea::before {
+        content: ''; position: absolute; inset: 0; pointer-events: none; z-index: 27; mix-blend-mode: screen; opacity: 0.5;
+        background:
+            radial-gradient(140% 90% at 8% 92%, rgba(255,140,60,0.10), transparent 42%),
+            radial-gradient(140% 90% at 92% 8%, rgba(70,160,255,0.10), transparent 42%);
+    }
 
     /* the pistol is now drawn directly on the canvas for a clean, realistic first-person look */
 
@@ -367,6 +380,15 @@ game_html = '''
         let fx = p.x - w/2, fy = p.y - h/2;
         let depth = 0.5 * p.size * b.side; // side face offset
 
+        // soft depth-of-field falloff for crates far down the corridor
+        let distFromCam = b.z - cameraZ;
+        let dofBlur = Math.max(0, Math.min(2.2, (distFromCam - 46) / 22));
+        ctx.save();
+        if (dofBlur > 0.05) ctx.filter = "blur(" + dofBlur.toFixed(2) + "px)";
+
+        // grounding shadow so the crate doesn't float
+        drawGroundAO(fx + w/2, fy + h + p.size * 0.06, w * 0.62, Math.max(3, p.size * 0.16));
+
         // side face (gives it 3D volume)
         ctx.fillStyle = b.topColor;
         ctx.beginPath();
@@ -383,15 +405,29 @@ game_html = '''
         ctx.lineTo(fx + w + depth, fy - Math.abs(depth)*0.5);
         ctx.lineTo(fx + depth, fy - Math.abs(depth)*0.5);
         ctx.closePath(); ctx.fill();
+        ctx.save(); ctx.clip();
+        let topSheen = ctx.createLinearGradient(fx, fy - Math.abs(depth)*0.5, fx + w, fy);
+        topSheen.addColorStop(0, "rgba(255,255,255,0.22)"); topSheen.addColorStop(0.5, "rgba(255,255,255,0.02)"); topSheen.addColorStop(1, "rgba(255,255,255,0.16)");
+        ctx.fillStyle = topSheen; ctx.fillRect(fx - 10, fy - h, w + depth + 20, h);
+        ctx.restore();
 
         // front face base
         ctx.fillStyle = b.baseColor; ctx.fillRect(fx, fy, w, h);
+        // vertical light falloff: brighter near the top (sky/floodlight), darker toward the ground (AO)
+        let faceGrd = ctx.createLinearGradient(fx, fy, fx, fy + h);
+        faceGrd.addColorStop(0, "rgba(255,255,255,0.10)");
+        faceGrd.addColorStop(0.35, "rgba(255,255,255,0)");
+        faceGrd.addColorStop(1, "rgba(0,0,0,0.30)");
+        ctx.fillStyle = faceGrd; ctx.fillRect(fx, fy, w, h);
         // corrugation ribs
         let ribs = 10;
         for (let i = 0; i < ribs; i++) {
             ctx.fillStyle = (i % 2 === 0) ? "rgba(0,0,0,0.16)" : "rgba(255,255,255,0.06)";
             ctx.fillRect(fx + (i/ribs)*w, fy + h*0.08, (w/ribs)*0.55, h*0.84);
         }
+        // key-light rim on the edge facing the light source (moon/floodlight sits camera-left-ish)
+        let rimEdgeX = b.side > 0 ? fx : fx + w;
+        drawRimStroke(rimEdgeX, fy + h*0.03, rimEdgeX, fy + h*0.97, Math.max(1.2, p.size*0.035), "rgba(190,225,255,0.55)", 0.6);
         // top + bottom rails
         ctx.fillStyle = b.topColor; ctx.fillRect(fx, fy, w, h*0.09); ctx.fillRect(fx, fy + h*0.91, w, h*0.09);
         // corner castings
@@ -417,12 +453,31 @@ game_html = '''
             for (let i = 0; i < 9; i++) { ctx.fillStyle = (i%2===0)?"rgba(0,0,0,0.16)":"rgba(255,255,255,0.05)"; ctx.fillRect(fx + w*0.05 + (i/9)*w*0.9, sy + h*0.08, (w*0.9/9)*0.55, h*0.72); }
             ctx.strokeStyle = "rgba(0,0,0,0.55)"; ctx.strokeRect(fx + w*0.05, sy, w*0.9, h*0.9);
         }
+        ctx.restore();
     }
 
     function shade(hex, f) {
         let c = hex.replace('#',''); let r = parseInt(c.substr(0,2),16), g = parseInt(c.substr(2,2),16), b = parseInt(c.substr(4,2),16);
         r = Math.min(255, Math.floor(r*f)); g = Math.min(255, Math.floor(g*f)); b = Math.min(255, Math.floor(b*f));
         return "rgb(" + r + "," + g + "," + b + ")";
+    }
+
+    // ---------------- LIGHTING HELPERS ----------------
+    // soft multi-layer contact shadow so objects feel grounded instead of pasted on
+    function drawGroundAO(cx, groundY, rx, ry) {
+        ctx.save();
+        let g = ctx.createRadialGradient(cx, groundY, 0, cx, groundY, rx);
+        g.addColorStop(0, "rgba(0,0,0,0.55)"); g.addColorStop(0.6, "rgba(0,0,0,0.28)"); g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.ellipse(cx, groundY, rx, ry, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+    }
+    // thin bright stroke along one edge of a rect to fake a key-light rim (moon/floodlight)
+    function drawRimStroke(x1, y1, x2, y2, width, color, alpha) {
+        ctx.save();
+        ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+        ctx.restore();
     }
 
     function roundRectPath(x, y, w, h, r) {
@@ -505,6 +560,17 @@ game_html = '''
         roundRectPath(-158, -100, 208, 36, 7); ctx.fillStyle = slideGrd; ctx.fill();
         // slide top highlight
         ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(-150, -98, 190, 4);
+        // brushed-metal micro streaks
+        ctx.save();
+        roundRectPath(-158, -100, 208, 36, 7); ctx.clip();
+        ctx.strokeStyle = "rgba(255,255,255,0.05)"; ctx.lineWidth = 1;
+        for (let i = -155; i < 45; i += 3) { ctx.beginPath(); ctx.moveTo(i, -99); ctx.lineTo(i, -65); ctx.stroke(); }
+        // slow-moving specular sweep so the metal catches light as it sways
+        let sweepX = -155 + ((cycleTick * 26) % 260);
+        let sweepGrd = ctx.createLinearGradient(sweepX - 22, 0, sweepX + 22, 0);
+        sweepGrd.addColorStop(0, "rgba(255,255,255,0)"); sweepGrd.addColorStop(0.5, "rgba(255,255,255,0.22)"); sweepGrd.addColorStop(1, "rgba(255,255,255,0)");
+        ctx.fillStyle = sweepGrd; ctx.fillRect(sweepX - 22, -100, 44, 36);
+        ctx.restore();
         // ejection port
         ctx.fillStyle = "#05070a"; ctx.fillRect(-40, -92, 34, 16);
         // rear serrations
@@ -576,7 +642,7 @@ game_html = '''
         }
 
         // ground shadow
-        ctx.fillStyle = "rgba(0,0,0,0.45)"; ctx.beginPath(); ctx.ellipse(cx, feetY + s*0.05, s*0.7, s*0.18, 0, 0, Math.PI*2); ctx.fill();
+        drawGroundAO(cx, feetY + s*0.06, s*0.75, s*0.2);
 
         // legs
         ctx.fillStyle = "#243027";
@@ -589,6 +655,10 @@ game_html = '''
         ctx.fillStyle = "#2f3a2b"; ctx.fillRect(cx - s*0.42, feetY - s*1.35, s*0.84, s*0.85);
         ctx.fillStyle = "#1c241a"; ctx.fillRect(cx - s*0.42, feetY - s*1.35, s*0.84, s*0.85); // base
         ctx.fillStyle = "#3c4a35"; ctx.fillRect(cx - s*0.38, feetY - s*1.3, s*0.76, s*0.75); // vest plate
+        // vest light falloff (top catches ambient light, bottom sinks into shadow)
+        let vestGrd = ctx.createLinearGradient(cx, feetY - s*1.3, cx, feetY - s*0.55);
+        vestGrd.addColorStop(0, "rgba(255,255,255,0.14)"); vestGrd.addColorStop(0.4, "rgba(255,255,255,0)"); vestGrd.addColorStop(1, "rgba(0,0,0,0.32)");
+        ctx.fillStyle = vestGrd; ctx.fillRect(cx - s*0.38, feetY - s*1.3, s*0.76, s*0.75);
         // vest pouches + straps
         ctx.fillStyle = "#20281c";
         ctx.fillRect(cx - s*0.3, feetY - s*0.95, s*0.24, s*0.22);
@@ -596,6 +666,8 @@ game_html = '''
         ctx.strokeStyle = "#12160f"; ctx.lineWidth = Math.max(1, s*0.05);
         ctx.beginPath(); ctx.moveTo(cx - s*0.2, feetY - s*1.3); ctx.lineTo(cx - s*0.2, feetY - s*0.55);
         ctx.moveTo(cx + s*0.2, feetY - s*1.3); ctx.lineTo(cx + s*0.2, feetY - s*0.55); ctx.stroke();
+        // rim light along the silhouette edge closest to camera (mimics moon/flood backlight)
+        drawRimStroke(cx - s*0.42, feetY - s*1.3, cx - s*0.42, feetY - s*0.5, Math.max(1, s*0.045), "rgba(200,230,255,0.5)", 0.55);
 
         // arms
         ctx.fillStyle = "#2f3a2b";
@@ -618,11 +690,17 @@ game_html = '''
 
         // neck + head
         ctx.fillStyle = "#c79a6b"; ctx.fillRect(cx - s*0.1, feetY - s*1.45, s*0.2, s*0.16);
-        ctx.fillStyle = "#d4b38a"; ctx.beginPath(); ctx.arc(cx, feetY - s*1.62, s*0.3, 0, Math.PI*2); ctx.fill();
+        let headGrd = ctx.createRadialGradient(cx - s*0.12, feetY - s*1.7, s*0.05, cx, feetY - s*1.62, s*0.32);
+        headGrd.addColorStop(0, "#e6c49a"); headGrd.addColorStop(0.7, "#d4b38a"); headGrd.addColorStop(1, "#a9805a");
+        ctx.fillStyle = headGrd; ctx.beginPath(); ctx.arc(cx, feetY - s*1.62, s*0.3, 0, Math.PI*2); ctx.fill();
         // helmet
-        ctx.fillStyle = "#2a3325"; ctx.beginPath(); ctx.arc(cx, feetY - s*1.68, s*0.34, Math.PI, 0); ctx.fill();
+        let helmGrd = ctx.createLinearGradient(cx - s*0.34, feetY - s*1.98, cx + s*0.34, feetY - s*1.68);
+        helmGrd.addColorStop(0, "#3a4732"); helmGrd.addColorStop(0.5, "#2a3325"); helmGrd.addColorStop(1, "#161c12");
+        ctx.fillStyle = helmGrd; ctx.beginPath(); ctx.arc(cx, feetY - s*1.68, s*0.34, Math.PI, 0); ctx.fill();
         ctx.fillRect(cx - s*0.34, feetY - s*1.7, s*0.68, s*0.1);
         ctx.fillStyle = "#1a2016"; ctx.fillRect(cx + s*0.1, feetY - s*1.74, s*0.28, s*0.05); // helmet accessory rail
+        // helmet rim light catching the key light
+        drawRimStroke(cx - s*0.33, feetY - s*1.95, cx - s*0.12, feetY - s*1.98, Math.max(1, s*0.04), "rgba(210,235,255,0.7)", 0.6);
         // visor / eyes
         ctx.fillStyle = "#0b0d0a"; ctx.fillRect(cx - s*0.2, feetY - s*1.6, s*0.4, s*0.08);
 
@@ -677,6 +755,10 @@ game_html = '''
             // waterline is at the horizon; the ship hull sits IN the sea
             let waterTop = HORIZON - 4;
             drawCargoShip(150 - (cameraX * 22), waterTop);
+            // faint atmospheric haze where sky meets water
+            let seaHaze = ctx.createLinearGradient(0, waterTop - 36, 0, waterTop + 14);
+            seaHaze.addColorStop(0, "rgba(200,210,225,0)"); seaHaze.addColorStop(1, "rgba(200,210,225,0.14)");
+            ctx.fillStyle = seaHaze; ctx.fillRect(0, waterTop - 36, CW, 50);
 
             // sea surface
             let seaGrd = ctx.createLinearGradient(0, waterTop, 0, CH); seaGrd.addColorStop(0, "#0c2f3a"); seaGrd.addColorStop(0.4, "#08222c"); seaGrd.addColorStop(1, "#02121a"); ctx.fillStyle = seaGrd; ctx.fillRect(0, waterTop, CW, CH - waterTop);
@@ -693,9 +775,26 @@ game_html = '''
             }
         } else {
             let sky = ctx.createLinearGradient(0,0,0,HORIZON); sky.addColorStop(0,"#0b1220"); sky.addColorStop(1,"#0a1a1f"); ctx.fillStyle = sky; ctx.fillRect(0,0,CW,HORIZON);
-            // warehouse floodlights glow
-            ctx.fillStyle = "rgba(250, 204, 21, 0.05)"; ctx.beginPath(); ctx.moveTo(60,0); ctx.lineTo(140,0); ctx.lineTo(200,HORIZON); ctx.lineTo(30,HORIZON); ctx.closePath(); ctx.fill();
+            // gantry crane silhouette against the night sky (far background, adds scale)
+            ctx.save(); ctx.globalAlpha = 0.5; ctx.strokeStyle = "#0e1620"; ctx.fillStyle = "#0e1620"; ctx.lineWidth = 5;
+            ctx.beginPath(); ctx.moveTo(340, HORIZON - 4); ctx.lineTo(340, 30); ctx.lineTo(300, 8); ctx.lineTo(300, 30); ctx.moveTo(340,30); ctx.lineTo(400,30); ctx.stroke();
+            for (let i=0;i<5;i++){ ctx.fillRect(346 + i*10, 40 + i*6, 3, HORIZON-44-i*6); }
+            ctx.restore();
+            // warehouse floodlight volumetric beams (two crossing shafts, additive glow)
+            ctx.save(); ctx.globalCompositeOperation = "lighter";
+            let beam1 = ctx.createLinearGradient(60, 0, 190, HORIZON); beam1.addColorStop(0, "rgba(250,220,150,0.14)"); beam1.addColorStop(1, "rgba(250,220,150,0)");
+            ctx.fillStyle = beam1; ctx.beginPath(); ctx.moveTo(70,0); ctx.lineTo(150,0); ctx.lineTo(210,HORIZON); ctx.lineTo(40,HORIZON); ctx.closePath(); ctx.fill();
+            let beam2 = ctx.createLinearGradient(360, 0, 260, HORIZON); beam2.addColorStop(0, "rgba(180,220,255,0.10)"); beam2.addColorStop(1, "rgba(180,220,255,0)");
+            ctx.fillStyle = beam2; ctx.beginPath(); ctx.moveTo(330,0); ctx.lineTo(390,0); ctx.lineTo(370,HORIZON); ctx.lineTo(250,HORIZON); ctx.closePath(); ctx.fill();
+            ctx.restore();
+            // floodlight source glows
+            let src1 = ctx.createRadialGradient(110,4,1,110,4,30); src1.addColorStop(0,"rgba(255,244,210,0.55)"); src1.addColorStop(1,"rgba(255,244,210,0)");
+            ctx.fillStyle = src1; ctx.beginPath(); ctx.arc(110,4,30,0,Math.PI*2); ctx.fill();
             ctx.fillStyle = "#050a0c"; ctx.fillRect(0, HORIZON, CW, CH);
+            // faint ground haze near the horizon for depth
+            let haze = ctx.createLinearGradient(0, HORIZON - 40, 0, HORIZON + 30);
+            haze.addColorStop(0, "rgba(180,200,210,0)"); haze.addColorStop(1, "rgba(180,200,210,0.10)");
+            ctx.fillStyle = haze; ctx.fillRect(0, HORIZON - 40, CW, 70);
         }
 
         // perspective floor

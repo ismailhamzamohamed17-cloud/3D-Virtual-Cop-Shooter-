@@ -476,16 +476,19 @@ function makeGuard(x,z){
   const flash = new THREE.Mesh(new THREE.SphereGeometry(0.12,8,8),
     new THREE.MeshBasicMaterial({ color:0xffcf6b, transparent:true, opacity:0 }));
   flash.position.set(0.42,1.25,-0.35); g.add(flash);
+  const muzzleLight = new THREE.PointLight(0xffcf6b, 0, 10, 2);
+  muzzleLight.position.copy(flash.position); g.add(muzzleLight);
 
   g.position.set(x, 0, z);
   g.userData = {
-    alive:true, hp:2, torso, head, helmet, flash,
+    alive:true, hp:2, torso, head, helmet, flash, muzzleLight, rifle,
     legL:lL, legR:lR, armL:aL, armR:aR,
-    fireCd: 1.2 + Math.random()*1.6,
-    fireTimer: 1 + Math.random()*2,
+    fireCd: 1.0 + Math.random()*1.2,
+    fireTimer: 0.6 + Math.random()*1.4,
     wobble: Math.random()*Math.PI*2,
     walkPhase: Math.random()*Math.PI*2,
-    speed: 1.6 + Math.random()*1.2,   // approach speed
+    speed: 5.5 + Math.random()*2,   // running approach speed
+    engaged:false,
   };
   scene.add(g);
   guards.push(g);
@@ -502,10 +505,10 @@ function guardHitMeshes(){
 /* spawn a wave of guards ahead of the player */
 let waveIndex = 0;
 function spawnWave(zBase){
-  const count = 5;              // exactly 5 to advance
+  const count = 5;              // exactly 5 per sector, always
   for(let i=0;i<count;i++){
     const x = (Math.random()-0.5)*(DOCK_W-8);
-    const z = zBase - 6 - Math.random()*10;   // close spawn, right in front of the player
+    const z = zBase - 48 - Math.random()*24;   // far away — they have to run in
     makeGuard(x, z);
   }
 }
@@ -516,10 +519,29 @@ function spawnWave(zBase){
 const weapon = new THREE.Group();
 camera.add(weapon);
 
+function gunMetalTexture(baseGrey){
+  const c = document.createElement('canvas'); c.width=c.height=128;
+  const x = c.getContext('2d');
+  x.fillStyle = baseGrey; x.fillRect(0,0,128,128);
+  for(let i=0;i<600;i++){
+    const g = Math.random()*40;
+    x.strokeStyle = `rgba(${g+10},${g+10},${g+14},${Math.random()*0.35})`;
+    x.lineWidth = Math.random()*1.2;
+    const y = Math.random()*128;
+    x.beginPath(); x.moveTo(Math.random()*128, y); x.lineTo(Math.random()*128, y+ (Math.random()-0.5)*6); x.stroke();
+  }
+  for(let i=0;i<25;i++){
+    x.fillStyle = `rgba(0,0,0,${0.15+Math.random()*0.2})`;
+    x.beginPath(); x.arc(Math.random()*128, Math.random()*128, Math.random()*2+0.5, 0, Math.PI*2); x.fill();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(2,2);
+  return t;
+}
 function buildPistol(){
   const g = new THREE.Group();
-  const black = new THREE.MeshStandardMaterial({ color:0x14161b, roughness:.35, metalness:.85 });
-  const grey  = new THREE.MeshStandardMaterial({ color:0x2a2e36, roughness:.4, metalness:.8 });
+  const black = new THREE.MeshStandardMaterial({ color:0x14161b, roughness:.35, metalness:.85, map:gunMetalTexture('#1b1d22') });
+  const grey  = new THREE.MeshStandardMaterial({ color:0x2a2e36, roughness:.4, metalness:.8, map:gunMetalTexture('#2f333c') });
   const glove = new THREE.MeshStandardMaterial({ color:0x14171d, roughness:.9, metalness:.05 });
 
   // slide (top)
@@ -551,11 +573,16 @@ function buildPistol(){
   const foreL = new THREE.Mesh(new THREE.CylinderGeometry(0.08,0.1,0.45,10), glove);
   foreL.position.set(-0.16,-0.46,0.22); foreL.rotation.set(0.7,0,0.3); g.add(foreL);
 
-  // muzzle flash
-  const mflash = new THREE.Mesh(new THREE.ConeGeometry(0.12,0.24,8),
-    new THREE.MeshBasicMaterial({ color:0xffd27a, transparent:true, opacity:0, fog:false }));
-  mflash.rotation.x = -Math.PI/2; mflash.position.set(0,0.02,-0.72); g.add(mflash);
+  // muzzle flash — bright core cone + soft additive glow disc for a punchy effect
+  const mflash = new THREE.Mesh(new THREE.ConeGeometry(0.16,0.34,8),
+    new THREE.MeshBasicMaterial({ color:0xfff0c0, transparent:true, opacity:0, fog:false, blending:THREE.AdditiveBlending }));
+  mflash.rotation.x = -Math.PI/2; mflash.position.set(0,0.02,-0.74); g.add(mflash);
   g.userData.mflash = mflash;
+
+  const glow = new THREE.Mesh(new THREE.CircleGeometry(0.22,16),
+    new THREE.MeshBasicMaterial({ color:0xffcf6b, transparent:true, opacity:0, fog:false, blending:THREE.AdditiveBlending, side:THREE.DoubleSide }));
+  glow.position.set(0,0.02,-0.7); g.add(glow);
+  g.userData.glow = glow;
 
   return g;
 }
@@ -642,19 +669,23 @@ function setSector(){ sectorEl.innerHTML = 'SECTOR '+String.fromCharCode(69+ (st
 const state = {
   running:false, hp:100, score:0, sector:0,
   cleared:0, killsThisWave:0,
-  advancing:false, advanceTarget:0,
   lastStepZ:0, stepPhase:0,
   yaw:0, pitch:0,
-  strafe:0,
 };
 
 function startGame(){
   overlay.classList.add('hidden');
   audio(); // unlock
+  // hard reset: remove every leftover guard/puff from a previous run so old
+  // enemies never bleed into the new one
+  guards.forEach(gd=> scene.remove(gd));
+  guards.length = 0;
+  puffs.forEach(p=> scene.remove(p));
+  puffs.length = 0;
   state.running=true; state.hp=100; state.score=0; state.sector=0;
-  state.cleared=0; state.killsThisWave=0;
+  state.cleared=0; state.killsThisWave=0; state.stepPhase=0;
   rig.position.set(0,0,0);
-  spawnWave(-6);
+  spawnWave(0);
   setScore(0); renderHP(); setSector();
 }
 startBtn.addEventListener('click', startGame);
@@ -702,14 +733,18 @@ canvas.addEventListener('touchmove', (e)=>{
   e.preventDefault();
 }, {passive:false});
 
-/* ---- optional keyboard strafe (still supported on desktop) ---- */
-addEventListener('keydown', e=>{
-  if(e.key==='a'||e.key==='ArrowLeft') state.strafe=-1;
-  if(e.key==='d'||e.key==='ArrowRight') state.strafe=1;
-});
-addEventListener('keyup', e=>{
-  if(['a','d','ArrowLeft','ArrowRight'].includes(e.key)) state.strafe=0;
-});
+/* ---- MOVEMENT : WASD / arrow keys, forward-back-left-right ---- */
+const keys = { fwd:false, back:false, left:false, right:false };
+function keyDir(e){
+  const k = e.key.toLowerCase();
+  if(k==='w'||k==='arrowup')    return 'fwd';
+  if(k==='s'||k==='arrowdown')  return 'back';
+  if(k==='a'||k==='arrowleft')  return 'left';
+  if(k==='d'||k==='arrowright') return 'right';
+  return null;
+}
+addEventListener('keydown', e=>{ const d=keyDir(e); if(d){ keys[d]=true; e.preventDefault?.(); } });
+addEventListener('keyup',   e=>{ const d=keyDir(e); if(d){ keys[d]=false; } });
 
 /* =========================================================
    FIRING
@@ -736,7 +771,9 @@ function fire(){
   gunshot();
   recoil = 0.16;
   pistol.userData.mflash.material.opacity = 1;
-  muzzleLight.intensity = 4;
+  pistol.userData.mflash.rotation.z = Math.random()*Math.PI;
+  pistol.userData.glow.material.opacity = 0.9;
+  muzzleLight.intensity = 7;
 
   raycaster.setFromCamera(new THREE.Vector2(aim.ndcX, aim.ndcY), camera);
   // check guards AND containers together so a container in front of a guard blocks the shot
@@ -788,14 +825,13 @@ function puff(pos, color){
    AUTO ADVANCE : walk forward to next sector
 ========================================================= */
 function beginAdvance(){
-  state.advancing = true;
-  state.advanceTarget = rig.position.z - 55;   // move one cluster forward
   state.sector++;
   setSector();
-  // clear old dead guards
-  for(let i=guards.length-1;i>=0;i--){
-    if(!guards[i].userData.alive){ scene.remove(guards[i]); guards.splice(i,1); }
-  }
+  // purge every guard from the previous wave (dead or not) before the next 5 spawn
+  guards.forEach(gd=> scene.remove(gd));
+  guards.length = 0;
+  spawnWave(rig.position.z);
+  clearEl.textContent = 0;
 }
 
 /* =========================================================
@@ -874,38 +910,38 @@ function animate(){
     camera.rotation.order='YXZ';
     camera.rotation.y = state.yaw;
     camera.rotation.x = state.pitch + recoil*0.5;
-    // strafe stance
-    rig.position.x += (state.strafe*4 - rig.position.x*0) * 0 ; // no free x drift
-    rig.position.x = Math.max(-DOCK_W/2+3, Math.min(DOCK_W/2-3, rig.position.x + state.strafe*8*dt));
+    // free movement — forward/back/left/right, independent of aim direction
+    let mx = 0, mz = 0;
+    if(keys.fwd)   mz -= 1;
+    if(keys.back)  mz += 1;
+    if(keys.left)  mx -= 1;
+    if(keys.right) mx += 1;
+    const isMoving = (mx !== 0 || mz !== 0);
+    if(isMoving){
+      const len = Math.hypot(mx, mz);
+      mx /= len; mz /= len;
+      const moveSpeed = 8.5;
+      rig.position.x += mx * moveSpeed * dt;
+      rig.position.z += mz * moveSpeed * dt;
+      camera.position.y = 2.6 + Math.sin(t*10)*0.045;   // walking head-bob
+      state.stepPhase += moveSpeed*dt;
+      if(state.stepPhase > 1.3){ state.stepPhase = 0; footstep(false); }
+    } else {
+      camera.position.y = 2.6;
+    }
+    rig.position.x = Math.max(-DOCK_W/2+3, Math.min(DOCK_W/2-3, rig.position.x));
+    rig.position.z = Math.max(-WORLD_LEN+80, Math.min(20, rig.position.z));
 
     // recoil recover
     recoil *= 0.82;
     pistol.position.z = -0.6 + recoil;
     pistol.userData.mflash.material.opacity *= 0.7;
+    pistol.userData.glow.material.opacity *= 0.7;
     muzzleLight.intensity *= 0.75;
 
     // weapon idle sway
     weapon.position.x = Math.sin(t*1.3)*0.008;
     weapon.position.y = Math.sin(t*2.1)*0.006;
-
-    /* ---- AUTO ADVANCE MOVEMENT ---- */
-    if(state.advancing){
-      const speed = 10;
-      rig.position.z -= speed*dt;
-      // head bob
-      camera.position.y = 2.6 + Math.sin(t*10)*0.05;
-      // footsteps while walking
-      state.stepPhase += speed*dt;
-      if(state.stepPhase > 1.4){ state.stepPhase=0; footstep(false); }
-      if(rig.position.z <= state.advanceTarget){
-        state.advancing = false;
-        camera.position.y = 2.6;
-        spawnWave(rig.position.z - 6);
-        clearEl.textContent = 0;
-      }
-    } else {
-      camera.position.y = 2.6;
-    }
 
     /* ---- FOOTSTEP when passing a container cluster ---- */
     for(const cz of clusters){
@@ -916,6 +952,7 @@ function animate(){
     state.lastStepZ = rig.position.z;
 
     /* ---- GUARD AI ---- */
+    const ENGAGE_DIST = 20;   // distance at which a guard stops running and aims
     guards.forEach(gd=>{
       const u = gd.userData;
       if(u.alive){
@@ -923,40 +960,55 @@ function animate(){
         gd.lookAt(rig.position.x, gd.position.y, rig.position.z);
         u.wobble += dt;
         u.flash.material.opacity *= 0.6;
+        u.muzzleLight.intensity *= 0.6;
 
         const dz = gd.position.z - rig.position.z;   // how far ahead of player
         const gap = -dz;                             // positive distance in front
+        u.engaged = gap <= ENGAGE_DIST;
+        const moving = !u.engaged;
 
-        // ---- WALK toward the player until they get close, with limb swing ----
-        const holdAt = 16 + (gd.id||0)%6;            // stop distance so they don't overrun
-        const moving = gap > holdAt && !state.advancing;
         if(moving){
+          // ---- RUNNING toward the player ----
           const step = u.speed * dt;
-          gd.position.z += step;                     // move toward player (+z)
-          gd.position.x += (rig.position.x - gd.position.x) * Math.min(1, dt*0.3);
-          u.walkPhase += dt * 8;
+          gd.position.z += step;
+          gd.position.x += (rig.position.x - gd.position.x) * Math.min(1, dt*0.4);
+          u.walkPhase += dt * 12;                     // fast sprint cadence
+          const sw = Math.sin(u.walkPhase) * 1.0;
+          u.legL.rotation.x =  sw;
+          u.legR.rotation.x = -sw;
+          u.armL.rotation.x = -0.25 + sw*0.7;          // arms pump opposite legs
+          u.armR.rotation.x = -0.25 - sw*0.7;
+          u.torso.rotation.x = 0.16;                   // forward sprint lean
+          u.torso.position.y = 1.32 + Math.abs(Math.sin(u.walkPhase))*0.06;
+          u.rifle.position.set(0.4, 1.1, 0.3);
+          u.rifle.rotation.set(-0.1, 0, 0);
         } else {
-          u.walkPhase += dt * 2;                     // idle sway
+          // ---- PLANTED & AIMING ----
+          u.walkPhase += dt * 2;
+          const idle = Math.sin(u.walkPhase) * 0.05;
+          u.legL.rotation.x = idle;
+          u.legR.rotation.x = -idle;
+          u.torso.rotation.x = 0;
+          u.torso.position.y = 1.32;
+          u.armR.rotation.x = -1.4;                    // shoulder the rifle
+          u.armL.rotation.x = -1.15;
+          u.rifle.position.set(0.16, 1.52, -0.05);      // raised to aim down sights
+          u.rifle.rotation.set(0, 0, 0);
         }
-        // animate legs & arms so they don't glide like ghosts
-        const sw = Math.sin(u.walkPhase) * (moving ? 0.7 : 0.12);
-        u.legL.rotation.x =  sw;
-        u.legR.rotation.x = -sw;
-        u.armL.rotation.x = -0.5 - sw*0.5;
-        u.armR.rotation.x = -0.5 + sw*0.5;
-        u.torso.position.y = 1.32 + Math.abs(Math.sin(u.walkPhase))*(moving?0.03:0.008);
 
-        // shoot at player when in range and roughly ahead
-        if(dz < 0 && dz > -60){
+        // shoot at player once planted and in range, only with clear line of sight
+        if(u.engaged){
           u.fireTimer -= dt;
           if(u.fireTimer<=0){
             u.fireTimer = u.fireCd;
-            // only actually fire (and show a flash) if the guard can currently see the player
             const canSee = hasLineOfSight(gd);
             if(canSee){
               u.flash.material.opacity = 1;
+              u.muzzleLight.intensity = 4;
+              // rifle recoil kick
+              u.rifle.position.z -= 0.08;
               // chance to hit player
-              if(Math.random()<0.5 && !state.advancing){
+              if(Math.random()<0.5){
                 state.hp = Math.max(0, state.hp - (6+Math.random()*8));
                 renderHP(); hurtSound();
                 dmgEl.style.boxShadow='inset 0 0 120px rgba(255,0,0,.55)';

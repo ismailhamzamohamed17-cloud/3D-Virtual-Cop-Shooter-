@@ -168,7 +168,7 @@ renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.4;
 app.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
@@ -187,9 +187,9 @@ rig.add(camera);
 /* =========================================================
    LIGHTING  (moonlit night)
 ========================================================= */
-scene.add(new THREE.HemisphereLight(0x334466, 0x0a1020, 0.55));
+scene.add(new THREE.HemisphereLight(0x5a7099, 0x1c2740, 1.0));
 
-const moon = new THREE.DirectionalLight(0xbcd2ff, 1.15);
+const moon = new THREE.DirectionalLight(0xd8e4ff, 1.8);
 moon.position.set(-60, 90, -40);
 moon.castShadow = true;
 moon.shadow.mapSize.set(2048, 2048);
@@ -200,9 +200,19 @@ moon.shadow.camera.top = 120; moon.shadow.camera.bottom = -120;
 moon.shadow.bias = -0.0004;
 scene.add(moon);
 
-const fill = new THREE.DirectionalLight(0x2a4a8a, 0.35);
+const fill = new THREE.DirectionalLight(0x4a6fbf, 0.7);
 fill.position.set(40, 30, 40);
 scene.add(fill);
+
+/* soft ambient so nothing ever goes pure black */
+scene.add(new THREE.AmbientLight(0x8090b0, 0.45));
+
+/* a player flashlight that follows the camera so guard faces are always visible up close */
+const flashlight = new THREE.SpotLight(0xfff2d8, 2.4, 70, Math.PI/5, 0.5, 1.2);
+flashlight.position.set(0, 0, 0);
+camera.add(flashlight);
+camera.add(flashlight.target);
+flashlight.target.position.set(0, 0, -1);
 
 /* =========================================================
    SKY : stars + moon disc
@@ -420,7 +430,7 @@ for(let z=30; z>-WORLD_LEN; z-=48){
   const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.35,10,10),
     new THREE.MeshBasicMaterial({ color:0xffe6a8 }));
   lamp.position.set(side*(DOCK_W/2-1.2), 7, z); scene.add(lamp);
-  const pl = new THREE.PointLight(0xffd18a, 1.6, 26, 2); pl.position.copy(lamp.position); scene.add(pl);
+  const pl = new THREE.PointLight(0xffd18a, 3.2, 34, 2); pl.position.copy(lamp.position); scene.add(pl);
 }
 
 /* =========================================================
@@ -495,7 +505,7 @@ function spawnWave(zBase){
   const count = 5;              // exactly 5 to advance
   for(let i=0;i<count;i++){
     const x = (Math.random()-0.5)*(DOCK_W-8);
-    const z = zBase - 14 - Math.random()*22;
+    const z = zBase - 6 - Math.random()*10;   // close spawn, right in front of the player
     makeGuard(x, z);
   }
 }
@@ -644,7 +654,7 @@ function startGame(){
   state.running=true; state.hp=100; state.score=0; state.sector=0;
   state.cleared=0; state.killsThisWave=0;
   rig.position.set(0,0,0);
-  spawnWave(-30);
+  spawnWave(-6);
   setScore(0); renderHP(); setSector();
 }
 startBtn.addEventListener('click', startGame);
@@ -705,6 +715,22 @@ addEventListener('keyup', e=>{
    FIRING
 ========================================================= */
 const raycaster = new THREE.Raycaster();
+const losRaycaster = new THREE.Raycaster();
+const losFrom = new THREE.Vector3();
+const losTo = new THREE.Vector3();
+const losDir = new THREE.Vector3();
+/* true if nothing in `collidables` blocks the line from a guard's chest to the player's camera */
+function hasLineOfSight(gd){
+  losFrom.set(gd.position.x, 1.4, gd.position.z);
+  camera.getWorldPosition(losTo);
+  losDir.subVectors(losTo, losFrom);
+  const dist = losDir.length();
+  losDir.normalize();
+  losRaycaster.set(losFrom, losDir);
+  losRaycaster.far = dist;
+  const blocked = losRaycaster.intersectObjects(collidables, false);
+  return blocked.length === 0;
+}
 let recoil = 0;
 function fire(){
   gunshot();
@@ -713,8 +739,10 @@ function fire(){
   muzzleLight.intensity = 4;
 
   raycaster.setFromCamera(new THREE.Vector2(aim.ndcX, aim.ndcY), camera);
-  const hits = raycaster.intersectObjects(guardHitMeshes(), false);
-  if(hits.length){
+  // check guards AND containers together so a container in front of a guard blocks the shot
+  const combined = guardHitMeshes().concat(collidables);
+  const hits = raycaster.intersectObjects(combined, false);
+  if(hits.length && hits[0].object.userData.guard){
     const gd = hits[0].object.userData.guard;
     const headHit = hits[0].object === gd.userData.head || hits[0].object === gd.userData.helmet;
     gd.userData.hp -= headHit ? 2 : 1;
@@ -722,6 +750,9 @@ function fire(){
     // blood puff
     puff(hits[0].point, 0xaa1518);
     if(gd.userData.hp<=0){ killGuard(gd); }
+  } else if(hits.length){
+    // hit a container instead — spark puff, no damage
+    puff(hits[0].point, 0xd8d8c8);
   }
 }
 
@@ -796,6 +827,7 @@ function updateThreats(){
     if(!gd.userData.alive) return;
     const gap = rig.position.z - gd.position.z;      // distance in front of player
     if(gap > 55 || gap < 2) return;                  // only rings for nearby enemies
+    if(!hasLineOfSight(gd)) return;                  // hidden behind a container = no threat marker
     // project the guard's chest to screen space
     projV.set(gd.position.x, 1.5, gd.position.z);
     projV.project(camera);
@@ -868,7 +900,7 @@ function animate(){
       if(rig.position.z <= state.advanceTarget){
         state.advancing = false;
         camera.position.y = 2.6;
-        spawnWave(rig.position.z - 25);
+        spawnWave(rig.position.z - 6);
         clearEl.textContent = 0;
       }
     } else {
@@ -919,14 +951,18 @@ function animate(){
           u.fireTimer -= dt;
           if(u.fireTimer<=0){
             u.fireTimer = u.fireCd;
-            u.flash.material.opacity = 1;
-            // chance to hit player
-            if(Math.random()<0.5 && !state.advancing){
-              state.hp = Math.max(0, state.hp - (6+Math.random()*8));
-              renderHP(); hurtSound();
-              dmgEl.style.boxShadow='inset 0 0 120px rgba(255,0,0,.55)';
-              setTimeout(()=> dmgEl.style.boxShadow='inset 0 0 0 rgba(255,0,0,0)', 120);
-              if(state.hp<=0) gameOver();
+            // only actually fire (and show a flash) if the guard can currently see the player
+            const canSee = hasLineOfSight(gd);
+            if(canSee){
+              u.flash.material.opacity = 1;
+              // chance to hit player
+              if(Math.random()<0.5 && !state.advancing){
+                state.hp = Math.max(0, state.hp - (6+Math.random()*8));
+                renderHP(); hurtSound();
+                dmgEl.style.boxShadow='inset 0 0 120px rgba(255,0,0,.55)';
+                setTimeout(()=> dmgEl.style.boxShadow='inset 0 0 0 rgba(255,0,0,0)', 120);
+                if(state.hp<=0) gameOver();
+              }
             }
           }
         }

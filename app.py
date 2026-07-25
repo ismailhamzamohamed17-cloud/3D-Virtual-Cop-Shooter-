@@ -38,59 +38,7 @@ game_html = '''
 
     canvas { position: absolute; top: 0; left: 0; width: 420px; height: 520px; z-index: 1; }
 
-    /* ---------- REALISTIC PISTOL (bottom-right, first person) ---------- */
-    #weapon {
-        position: absolute; bottom: -8px; right: 4px; width: 210px; height: 250px;
-        pointer-events: none; z-index: 25; display: none;
-        transform-origin: 78% 100%; will-change: transform;
-        filter: drop-shadow(-8px -6px 14px rgba(0,0,0,0.7));
-    }
-    .gun { position: absolute; }
-    /* the hand / grip the player holds */
-    .g-grip {
-        bottom: 0; right: 8px; width: 78px; height: 150px;
-        background: linear-gradient(105deg, #16181c 0%, #2b2f36 45%, #101216 100%);
-        border-radius: 14px 30px 22px 30px;
-        transform: rotate(18deg);
-        box-shadow: inset 3px 3px 6px rgba(255,255,255,0.08), inset -4px -4px 8px rgba(0,0,0,0.7);
-    }
-    /* grip stippling / texture */
-    .g-grip::before {
-        content: ''; position: absolute; inset: 14px 12px 40px 14px; border-radius: 10px;
-        background-image: radial-gradient(rgba(255,255,255,0.10) 1px, transparent 1.4px);
-        background-size: 7px 7px; opacity: 0.6;
-    }
-    /* frame body */
-    .g-frame {
-        bottom: 118px; right: 26px; width: 150px; height: 46px;
-        background: linear-gradient(180deg, #3a3f47 0%, #23262c 55%, #0e1013 100%);
-        border-radius: 8px 6px 6px 10px; transform: rotate(-9deg);
-        box-shadow: inset 0 2px 3px rgba(255,255,255,0.14), inset 0 -4px 6px rgba(0,0,0,0.7);
-    }
-    /* slide on top of frame with serrations */
-    .g-slide {
-        bottom: 150px; right: 22px; width: 168px; height: 40px;
-        background: linear-gradient(180deg, #4a505a 0%, #2c3037 50%, #14161a 100%);
-        border-radius: 7px 7px 4px 8px; transform: rotate(-9deg);
-        box-shadow: inset 0 3px 4px rgba(255,255,255,0.20), 0 3px 6px rgba(0,0,0,0.6);
-    }
-    .g-slide::after {
-        content: ''; position: absolute; top: 8px; left: 8px; width: 42px; height: 24px;
-        background: repeating-linear-gradient(90deg, #0c0e11 0 3px, #2b2f36 3px 6px);
-        border-radius: 2px; opacity: 0.9;
-    }
-    /* front + rear iron sights */
-    .g-sight-front { bottom: 190px; right: 30px; width: 6px; height: 12px; background: #0a0b0d; border-radius: 2px; transform: rotate(-9deg); }
-    .g-sight-rear  { bottom: 188px; right: 168px; width: 14px; height: 12px; background: #0a0b0d; border-radius: 2px 2px 0 0; transform: rotate(-9deg); }
-    .g-dot { bottom: 191px; right: 33px; width: 3px; height: 3px; border-radius: 50%; background: #22e0a1; box-shadow: 0 0 5px #22e0a1; }
-    /* trigger guard */
-    .g-guard {
-        bottom: 96px; right: 96px; width: 46px; height: 40px;
-        border: 7px solid #1a1d22; border-top: none; border-radius: 0 0 22px 22px;
-        transform: rotate(-9deg);
-    }
-    /* muzzle position marker (barrel end, upper-left of gun) */
-    #muzzle { bottom: 176px; right: 176px; width: 10px; height: 10px; }
+    /* the pistol is now drawn directly on the canvas for a clean, realistic first-person look */
 
     #flash {
         position: absolute; width: 66px; height: 66px;
@@ -152,16 +100,6 @@ game_html = '''
         <canvas id="gameCanvas" width="420" height="520"></canvas>
         <div id="sight"><div class="ringc"></div></div>
 
-        <div id="weapon">
-            <div class="gun g-guard"></div>
-            <div class="gun g-grip"></div>
-            <div class="gun g-frame"></div>
-            <div class="gun g-slide"></div>
-            <div class="gun g-sight-rear"></div>
-            <div class="gun g-sight-front"></div>
-            <div class="gun g-dot"></div>
-            <div class="gun" id="muzzle"></div>
-        </div>
         <div id="flash"><div class="spike"></div><div class="spike v"></div></div>
 
         <div id="overScreen">
@@ -184,6 +122,8 @@ game_html = '''
     let audioCtx = null;
     let bloodParticles = []; let smokeParticles = [];
 
+    let recoil = 0; let muzzleScreenX = CW - 150, muzzleScreenY = CH - 150;
+    const CORRIDOR_HALF = 1.15; // player path half-width; containers sit outside this
     let currentSector = "A"; let sectorKills = 0; let sectorClearing = false;
     const sectorsList = ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"];
     const sectorRequirements = { "A":3, "B":3, "C":3, "D":3, "E":4, "F":4, "G":4, "H":4, "I":4, "J":5 };
@@ -193,7 +133,6 @@ game_html = '''
     let cameraZ = 0, targetCameraZ = 0; let cameraX = 0, targetCameraX = 0; let cycleTick = 0;
 
     const gameArea = document.getElementById("gameArea");
-    const weapon = document.getElementById("weapon");
     const sight = document.getElementById("sight");
     const scoreCounter = document.getElementById("scoreCounter");
     const chapterTxt = document.getElementById("chapterTxt");
@@ -204,14 +143,29 @@ game_html = '''
     const finalScore = document.getElementById("finalScore");
     const flash = document.getElementById("flash");
 
-    // Shipping containers positioned along the port. side:1 => right face visible, -1 => left face.
+    // Shipping containers line BOTH sides of the walking corridor (|x| >= 3.0) so the
+    // player can never walk through one. side:1 => right face visible, -1 => left face.
     const static3DObstacles = [
-        { id: "c1", x: -2.1, y: 0.9, z: 15, baseColor: "#0f766e", topColor:"#134e4a", side: 1,  stack:true,  label:"HJX" },
-        { id: "c2", x:  2.2, y: 0.9, z: 27, baseColor: "#b91c1c", topColor:"#7f1d1d", side:-1,  stack:false, label:"MRK" },
-        { id: "c3", x: -2.0, y: 0.9, z: 41, baseColor: "#1d4ed8", topColor:"#1e3a8a", side: 1,  stack:true,  label:"COS" },
-        { id: "c4", x:  2.1, y: 0.9, z: 55, baseColor: "#a16207", topColor:"#713f12", side:-1,  stack:false, label:"EVR" },
-        { id: "c5", x: -2.2, y: 0.9, z: 69, baseColor: "#475569", topColor:"#1e293b", side: 1,  stack:true,  label:"UNK" }
+        { id: "c1", x: -3.1, y: 0.9, z: 15, baseColor: "#0f766e", topColor:"#134e4a", side: 1,  stack:true,  label:"HJX" },
+        { id: "c2", x:  3.2, y: 0.9, z: 21, baseColor: "#b91c1c", topColor:"#7f1d1d", side:-1,  stack:false, label:"MRK" },
+        { id: "c3", x: -3.0, y: 0.9, z: 33, baseColor: "#1d4ed8", topColor:"#1e3a8a", side: 1,  stack:true,  label:"COS" },
+        { id: "c4", x:  3.1, y: 0.9, z: 41, baseColor: "#a16207", topColor:"#713f12", side:-1,  stack:false, label:"EVR" },
+        { id: "c5", x: -3.2, y: 0.9, z: 55, baseColor: "#475569", topColor:"#1e293b", side: 1,  stack:true,  label:"UNK" },
+        { id: "c6", x:  3.0, y: 0.9, z: 63, baseColor: "#0f766e", topColor:"#134e4a", side:-1,  stack:false, label:"HJX" },
+        { id: "c7", x: -3.1, y: 0.9, z: 77, baseColor: "#b45309", topColor:"#78350f", side: 1,  stack:true,  label:"ONE" },
+        { id: "c8", x:  3.2, y: 0.9, z: 91, baseColor: "#334155", topColor:"#1e293b", side:-1,  stack:false, label:"YML" }
     ];
+
+    // true if a container blocks the straight sight-line between camera and (x,z)
+    function occludedBySpawn(x, z) {
+        for (let b of static3DObstacles) {
+            if (b.z <= cameraZ || b.z >= z) continue;         // must sit in front of camera, behind target
+            let f = (b.z - cameraZ) / (z - cameraZ);          // interpolate the sight-line at the crate's depth
+            let lineX = cameraX + (x - cameraX) * f;
+            if (Math.abs(lineX - b.x) < 1.5) return true;     // crate half-width + margin
+        }
+        return false;
+    }
 
     function setupAudio() {
         if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -303,7 +257,13 @@ game_html = '''
         if (isOver || sectorClearing || isMoving) return;
         if (threatsList.filter(t => !t.isDying).length >= 2) return;
         if (winScreen.style.display === "flex" || document.getElementById("chapterOverlay").style.display === "flex") return;
-        let idx = sectorsList.indexOf(currentSector); let spawnZ = cameraZ + 12 + (idx * 0.5); let spawnX = cameraX + (Math.random() * 2.6) - 1.3;
+        let spawnZ = cameraZ + 10.5, spawnX = 0, tries = 0;
+        // keep enemies inside the visible corridor AND out of any container's shadow
+        do {
+            spawnX = cameraX + (Math.random() * 2 - 1) * CORRIDOR_HALF;
+            spawnZ = cameraZ + 9 + Math.random() * 3;
+            tries++;
+        } while (occludedBySpawn(spawnX, spawnZ) && tries < 12);
         let ring = document.createElement("div"); ring.className = "target-ring"; gameArea.appendChild(ring);
         threatsList.push({ x: spawnX, y: 0.2, z: spawnZ, age: 0, loopTick: Math.floor(Math.random()*60), isDying: false, deathTick: 0, deathDir: Math.random() < 0.5 ? -1 : 1, isFlashing: false, ring: ring, currentScreenX: 0, currentScreenY: 0, currentRadius: 24 });
         sound("ding");
@@ -322,10 +282,6 @@ game_html = '''
         let dynamicallyAdjustedSize = Math.max(20, Math.min(64, (400 / mappedThreatZ) * 0.95));
         sight.style.width = dynamicallyAdjustedSize + "px"; sight.style.height = dynamicallyAdjustedSize + "px";
         sight.style.display = "block"; sight.style.left = currentX + "px"; sight.style.top = currentY + "px";
-
-        // gun recoil-idle: aim toward the reticle from the corner
-        let swayX = (currentX - CX0) / 26; let swayY = (currentY - HORIZON) / 40;
-        weapon.style.transform = "rotate(" + swayX + "deg) translate(" + (swayX*1.4) + "px," + swayY + "px)";
     }
 
     gameArea.addEventListener("mousemove", aim);
@@ -346,7 +302,7 @@ game_html = '''
         if (idx >= 0 && idx < sectorsList.length - 1) {
             currentSector = sectorsList[idx + 1]; sectorKills = 0; targetCameraZ = (idx + 1) * 16;
             let roll = Math.random();
-            targetCameraX = roll < 0.33 ? -1.6 : (roll < 0.66 ? 1.6 : 0.0);
+            targetCameraX = roll < 0.33 ? -CORRIDOR_HALF : (roll < 0.66 ? CORRIDOR_HALF : 0.0);
             chapterTxt.innerText = ["E","F","G","H","I","J"].includes(currentSector) ? "CH 1: CARGO WATERFRONT" : "CH 1: CONTAINER PORT";
             document.getElementById("tutorialPopup").style.display = "none";
         } else {
@@ -367,14 +323,11 @@ game_html = '''
     }
 
     function muzzleFX() {
-        // position the muzzle flash at the barrel tip in game space
-        let m = document.getElementById("muzzle").getBoundingClientRect();
-        let b = gameArea.getBoundingClientRect();
-        let mx = (m.left + m.width/2 - b.left) * (CW / b.width);
-        let my = (m.top + m.height/2 - b.top) * (CH / b.height);
+        // the muzzle tip is computed each frame by drawWeapon()
+        let mx = muzzleScreenX, my = muzzleScreenY;
         flash.style.left = mx + "px"; flash.style.top = my + "px";
         flash.style.display = "block"; setTimeout(() => { flash.style.display = "none"; }, 55);
-        weapon.animate([{ transform: getComputedStyle(weapon).transform }, { transform: getComputedStyle(weapon).transform + " translateY(10px)" }, { transform: getComputedStyle(weapon).transform }], { duration: 90 });
+        recoil = 1; // kicks the pistol back; decays in drawWeapon()
         for (let i = 0; i < 6; i++) smokeParticles.push({ x: mx + (Math.random()*10-5), y: my, vx: (Math.random()*1.2-0.6), vy: -0.8 - Math.random()*0.8, life: 1, r: 4 + Math.random()*4 });
     }
 
@@ -472,6 +425,136 @@ game_html = '''
         return "rgb(" + r + "," + g + "," + b + ")";
     }
 
+    function roundRectPath(x, y, w, h, r) {
+        ctx.beginPath();
+        ctx.moveTo(x + r, y);
+        ctx.arcTo(x + w, y, x + w, y + h, r);
+        ctx.arcTo(x + w, y + h, x, y + h, r);
+        ctx.arcTo(x, y + h, x, y, r);
+        ctx.arcTo(x, y, x + w, y, r);
+        ctx.closePath();
+    }
+
+    // A moored container ship sitting IN the water at the given waterline y.
+    function drawCargoShip(sx, waterY) {
+        let bob = Math.sin(cycleTick * 0.8) * 2;         // gentle rocking
+        let y = waterY + bob;
+        let hullTop = y - 26, hullLen = 170, x = sx;
+
+        // --- reflection first, below the waterline (drawn faint + wavy) ---
+        ctx.save();
+        ctx.globalAlpha = 0.22;
+        ctx.translate(0, waterY * 2);
+        ctx.scale(1, -1);
+        ctx.fillStyle = "#1a2733"; ctx.fillRect(x, hullTop, hullLen, 24);
+        ctx.fillStyle = "#243b4a";
+        ctx.fillRect(x + 28, hullTop - 26, 20, 26); ctx.fillRect(x + 58, hullTop - 22, 18, 22); ctx.fillRect(x + 92, hullTop - 30, 22, 30);
+        ctx.restore();
+
+        // --- hull ---
+        ctx.fillStyle = "#0d1720";
+        ctx.beginPath();
+        ctx.moveTo(x, hullTop);
+        ctx.lineTo(x + hullLen, hullTop);
+        ctx.lineTo(x + hullLen - 14, y + 6);
+        ctx.lineTo(x + 12, y + 6);
+        ctx.closePath(); ctx.fill();
+        // hull waterline stripe + boot topping
+        ctx.fillStyle = "#7f1d1d"; ctx.fillRect(x + 12, y - 2, hullLen - 26, 5);
+        ctx.fillStyle = "#111c26"; ctx.fillRect(x, hullTop, hullLen, 6);
+
+        // --- deck cargo: stacked container blocks ---
+        let cols = ["#0f766e","#b45309","#1d4ed8","#475569","#b91c1c","#0f766e"];
+        for (let i = 0; i < 6; i++) {
+            let bx = x + 14 + i * 24, by = hullTop - 16, bw = 20, bh = 16;
+            ctx.fillStyle = shade(cols[i], 0.7); ctx.fillRect(bx, by, bw, bh);
+            ctx.fillStyle = shade(cols[i], 1.0); ctx.fillRect(bx, by, bw, 4);
+            if (i % 2 === 0) { ctx.fillStyle = shade(cols[i], 0.55); ctx.fillRect(bx + 2, by - 14, bw - 4, 14); }
+        }
+
+        // --- superstructure (bridge) near the stern ---
+        ctx.fillStyle = "#243b4a"; ctx.fillRect(x + hullLen - 44, hullTop - 34, 30, 34);
+        ctx.fillStyle = "#cfe4ff"; // lit bridge windows
+        for (let r = 0; r < 3; r++) for (let c = 0; c < 4; c++) ctx.fillRect(x + hullLen - 41 + c*7, hullTop - 30 + r*9, 4, 4);
+        // funnel
+        ctx.fillStyle = "#111c26"; ctx.fillRect(x + hullLen - 26, hullTop - 48, 10, 16);
+        ctx.fillStyle = "#b45309"; ctx.fillRect(x + hullLen - 26, hullTop - 48, 10, 5);
+        // mast light
+        ctx.fillStyle = "rgba(255,80,80,0.9)"; ctx.beginPath(); ctx.arc(x + 8, hullTop - 22, 2, 0, Math.PI*2); ctx.fill();
+    }
+
+    // ---------- FIRST-PERSON PISTOL (drawn on canvas, bottom-right) ----------
+    function drawWeapon() {
+        recoil *= 0.78; if (recoil < 0.01) recoil = 0;
+        let swayX = (currentX - CX0) * 0.05, swayY = (currentY - HORIZON) * 0.03;
+        let px = CW - 92 + swayX, py = CH - 6 + swayY + recoil * 12;
+        let A = -0.30; // tilt so the barrel points up toward the reticle
+        ctx.save();
+        ctx.translate(px, py);
+        ctx.rotate(A);
+
+        // local helper: fill a rounded rect in the rotated frame
+        let rr = (x,y,w,h,r,fill) => { roundRectPath(x,y,w,h,r); ctx.fillStyle = fill; ctx.fill(); };
+
+        // barrel + slide gradient
+        let slideGrd = ctx.createLinearGradient(0, -104, 0, -66);
+        slideGrd.addColorStop(0, "#565d68"); slideGrd.addColorStop(0.5, "#2b3037"); slideGrd.addColorStop(1, "#12151a");
+        // frame
+        rr(-150, -66, 196, 20, 5, "#1b1f25");
+        // slide (top) with rounded nose
+        roundRectPath(-158, -100, 208, 36, 7); ctx.fillStyle = slideGrd; ctx.fill();
+        // slide top highlight
+        ctx.fillStyle = "rgba(255,255,255,0.12)"; ctx.fillRect(-150, -98, 190, 4);
+        // ejection port
+        ctx.fillStyle = "#05070a"; ctx.fillRect(-40, -92, 34, 16);
+        // rear serrations
+        ctx.fillStyle = "#0c0e12"; for (let i = 0; i < 6; i++) ctx.fillRect(22 - i*7, -96, 3, 28);
+        // front + rear iron sights
+        ctx.fillStyle = "#0a0b0d"; ctx.fillRect(-150, -110, 7, 12); ctx.fillRect(36, -112, 12, 14);
+        ctx.fillStyle = "#22e0a1"; ctx.beginPath(); ctx.arc(-146, -105, 2, 0, Math.PI*2); ctx.fill();
+        // muzzle opening
+        ctx.fillStyle = "#04060a"; ctx.beginPath(); ctx.arc(-152, -82, 6, 0, Math.PI*2); ctx.fill();
+
+        // trigger guard
+        ctx.strokeStyle = "#15181d"; ctx.lineWidth = 7; ctx.beginPath(); ctx.arc(0, -34, 17, -0.2, Math.PI + 0.6); ctx.stroke();
+        // trigger
+        ctx.strokeStyle = "#3a3f47"; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(2, -40, 8, 0.4, 2.0); ctx.stroke();
+
+        // grip (polymer) angled down-right from the frame
+        let gripGrd = ctx.createLinearGradient(6, -50, 60, 70);
+        gripGrd.addColorStop(0, "#2b2f36"); gripGrd.addColorStop(1, "#101216");
+        ctx.save(); ctx.translate(30, -46); ctx.rotate(0.34);
+        roundRectPath(-4, 0, 52, 128, 14); ctx.fillStyle = gripGrd; ctx.fill();
+        // stippling
+        ctx.fillStyle = "rgba(255,255,255,0.10)";
+        for (let gy = 16; gy < 104; gy += 9) for (let gx = 4; gx < 42; gx += 8) { ctx.beginPath(); ctx.arc(gx, gy, 1.1, 0, Math.PI*2); ctx.fill(); }
+        // magazine base
+        ctx.fillStyle = "#0a0c10"; roundRectPath(-6, 120, 56, 12, 4); ctx.fill();
+        ctx.restore();
+
+        // --- hand gripping the pistol ---
+        let skin = "#c9a074", skinDark = "#a97e54";
+        ctx.save(); ctx.translate(30, -46); ctx.rotate(0.34);
+        // palm / back of hand
+        ctx.fillStyle = skin; roundRectPath(30, 6, 40, 74, 16); ctx.fill();
+        // thumb wrapping toward the frame
+        ctx.fillStyle = skinDark; roundRectPath(4, 2, 26, 20, 10); ctx.fill();
+        // knuckles / fingers wrapping the front of the grip
+        ctx.fillStyle = skin;
+        for (let f = 0; f < 4; f++) { roundRectPath(-8, 14 + f*22, 44, 18, 9); ctx.fill(); }
+        ctx.fillStyle = "rgba(0,0,0,0.18)";
+        for (let f = 1; f < 4; f++) ctx.fillRect(-8, 14 + f*22 - 2, 44, 2);
+        ctx.restore();
+
+        // compute the muzzle tip in screen space for the flash/smoke
+        let cosA = Math.cos(A), sinA = Math.sin(A);
+        let lx = -152, ly = -82;
+        muzzleScreenX = px + lx * cosA - ly * sinA;
+        muzzleScreenY = py + lx * sinA + ly * cosA;
+
+        ctx.restore();
+    }
+
     function drawSoldier(t) {
         let p = project3D(t.x, t.y, t.z); if (!p) return;
         let peek = (Math.sin(t.loopTick * 0.05) + 1) / 2; let isOut = peek > 0.45;
@@ -481,7 +564,7 @@ game_html = '''
         t.currentScreenX = cx; t.currentScreenY = feetY - s * 1.0; t.currentRadius = s * 1.25;
 
         if (!t.isDying) { if (isOut) { t.ring.style.opacity = "1"; t.age++; } else { t.ring.style.opacity = "0"; } }
-        if (!t.isDying && t.age > 55 && t.age % 78 === 0 && !isMoving && isOut && !sectorClearing) {
+        if (!t.isDying && t.age > 55 && t.age % 78 === 0 && !isMoving && isOut && !sectorClearing && !occludedBySpawn(t.x, t.z)) {
             t.isFlashing = true; triggerEnemyDamageStrike(); setTimeout(() => { t.isFlashing = false; }, 90);
         }
 
@@ -585,17 +668,29 @@ game_html = '''
         ctx.clearRect(0, 0, CW, CH);
 
         if (isOutdoorSector) {
-            let skyGrd = ctx.createLinearGradient(0, 0, 0, HORIZON); skyGrd.addColorStop(0, "#0a1226"); skyGrd.addColorStop(0.55, "#111a33"); skyGrd.addColorStop(1, "#2a2440"); ctx.fillStyle = skyGrd; ctx.fillRect(0, 0, CW, HORIZON);
-            // moon
-            ctx.fillStyle = "rgba(240,240,220,0.9)"; ctx.beginPath(); ctx.arc(320, 60, 20, 0, Math.PI*2); ctx.fill();
-            ctx.fillStyle = "rgba(255,255,255,0.8)"; for (let i = 1; i <= 30; i++) { let sX = (i * 73) % CW; let sY = (i * 37) % 200; let tw = Math.abs(Math.sin(cycleTick + i)) * 1.6; ctx.fillRect(sX, sY, tw, tw); }
-            // distant cargo ship silhouette
-            ctx.fillStyle = "#060912"; let shipX = 150 - (cameraX * 25); ctx.fillRect(shipX, 224, 80, 18); ctx.fillRect(shipX + 24, 210, 20, 14); ctx.fillRect(shipX + 52, 214, 8, 28);
-            // sea
-            let seaGrd = ctx.createLinearGradient(0, HORIZON, 0, CH); seaGrd.addColorStop(0, "#071a24"); seaGrd.addColorStop(0.5, "#04222a"); seaGrd.addColorStop(1, "#02141a"); ctx.fillStyle = seaGrd; ctx.fillRect(0, HORIZON, CW, CH);
-            ctx.strokeStyle = "rgba(45, 212, 191, 0.18)"; ctx.lineWidth = 2; for (let waveY = HORIZON + 15; waveY < CH; waveY += 34) { ctx.beginPath(); let ws = Math.sin(cycleTick + waveY) * 12; ctx.moveTo(0, waveY + ws); ctx.bezierCurveTo(140, waveY - 14 + ws, 280, waveY + 14 + ws, CW, waveY + ws); ctx.stroke(); }
-            // moon reflection
-            ctx.fillStyle = "rgba(240,240,220,0.08)"; ctx.fillRect(300, HORIZON, 40, CH - HORIZON);
+            let skyGrd = ctx.createLinearGradient(0, 0, 0, HORIZON); skyGrd.addColorStop(0, "#070b1c"); skyGrd.addColorStop(0.5, "#101a33"); skyGrd.addColorStop(1, "#33314e"); ctx.fillStyle = skyGrd; ctx.fillRect(0, 0, CW, HORIZON);
+            // moon + soft halo
+            ctx.fillStyle = "rgba(240,240,220,0.16)"; ctx.beginPath(); ctx.arc(322, 58, 40, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "rgba(245,245,225,0.95)"; ctx.beginPath(); ctx.arc(322, 58, 20, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "rgba(255,255,255,0.8)"; for (let i = 1; i <= 34; i++) { let sX = (i * 73) % CW; let sY = (i * 37) % 200; let tw = Math.abs(Math.sin(cycleTick + i)) * 1.6; ctx.fillRect(sX, sY, tw, tw); }
+
+            // waterline is at the horizon; the ship hull sits IN the sea
+            let waterTop = HORIZON - 4;
+            drawCargoShip(150 - (cameraX * 22), waterTop);
+
+            // sea surface
+            let seaGrd = ctx.createLinearGradient(0, waterTop, 0, CH); seaGrd.addColorStop(0, "#0c2f3a"); seaGrd.addColorStop(0.4, "#08222c"); seaGrd.addColorStop(1, "#02121a"); ctx.fillStyle = seaGrd; ctx.fillRect(0, waterTop, CW, CH - waterTop);
+            // moon glitter path on the water
+            let glitGrd = ctx.createLinearGradient(0, waterTop, 0, CH); glitGrd.addColorStop(0, "rgba(240,240,205,0.35)"); glitGrd.addColorStop(1, "rgba(240,240,205,0)"); ctx.fillStyle = glitGrd; ctx.beginPath(); ctx.moveTo(300, waterTop); ctx.lineTo(344, waterTop); ctx.lineTo(372, CH); ctx.lineTo(272, CH); ctx.closePath(); ctx.fill();
+            // layered animated waves (denser + brighter near the camera for depth)
+            for (let waveY = waterTop + 10; waveY < CH; waveY += 16) {
+                let depth = (waveY - waterTop) / (CH - waterTop);
+                ctx.strokeStyle = "rgba(120, 210, 200," + (0.06 + depth*0.24) + ")"; ctx.lineWidth = 1 + depth*1.6;
+                ctx.beginPath(); let amp = 3 + depth*10; let ws = Math.sin(cycleTick*1.4 + waveY*0.4) * amp;
+                ctx.moveTo(0, waveY + ws);
+                ctx.bezierCurveTo(CW*0.33, waveY - amp + ws, CW*0.66, waveY + amp + ws, CW, waveY + ws*0.6);
+                ctx.stroke();
+            }
         } else {
             let sky = ctx.createLinearGradient(0,0,0,HORIZON); sky.addColorStop(0,"#0b1220"); sky.addColorStop(1,"#0a1a1f"); ctx.fillStyle = sky; ctx.fillRect(0,0,CW,HORIZON);
             // warehouse floodlights glow
@@ -637,12 +732,13 @@ game_html = '''
         });
 
         drawParticles();
+        if (!isOver) drawWeapon();
     }
 
     function initializeActiveArcadeGameplay() {
         document.getElementById("chapterOverlay").style.display = "none";
         if (currentSector === "A" && sectorKills === 0) { document.getElementById("tutorialPopup").style.display = "block"; }
-        scoreCounter.style.display = "block"; chapterTxt.style.display = "block"; targetTracker.style.display = "block"; document.getElementById("healthWrap").style.display = "block"; sight.style.display = "block"; weapon.style.display = "block";
+        scoreCounter.style.display = "block"; chapterTxt.style.display = "block"; targetTracker.style.display = "block"; document.getElementById("healthWrap").style.display = "block"; sight.style.display = "block";
         runLoopTimerId = setInterval(render3DSceneGrid, 1000 / 45);
     }
 
@@ -657,7 +753,7 @@ game_html = '''
 
         document.getElementById("chapterOverlay").style.display = "flex";
         document.getElementById("tutorialPopup").style.display = "none";
-        scoreCounter.style.display = "none"; chapterTxt.style.display = "none"; targetTracker.style.display = "none"; document.getElementById("healthWrap").style.display = "none"; sight.style.display = "none"; weapon.style.display = "none";
+        scoreCounter.style.display = "none"; chapterTxt.style.display = "none"; targetTracker.style.display = "none"; document.getElementById("healthWrap").style.display = "none"; sight.style.display = "none";
         setTimeout(initializeActiveArcadeGameplay, 3000);
     };
 

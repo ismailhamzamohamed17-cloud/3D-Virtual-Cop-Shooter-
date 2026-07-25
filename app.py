@@ -60,8 +60,9 @@ GAME_HTML = r"""
     transition:background .2s; }
   #hpbar i.off { background:#2a1113; box-shadow:none; }
 
-  /* crosshair */
-  #cross { top:50%; left:50%; transform:translate(-50%,-50%); width:46px; height:46px; }
+  /* crosshair (follows the mouse / finger) */
+  #cross { top:50%; left:50%; transform:translate(-50%,-50%); width:46px; height:46px;
+    transition:none; will-change:left,top; }
   #cross .ring { position:absolute; inset:0; border:2px solid #21e6c1; border-radius:50%;
     box-shadow:0 0 10px rgba(33,230,193,.9); opacity:.9; }
   #cross .dot { position:absolute; top:50%; left:50%; width:4px; height:4px; margin:-2px 0 0 -2px;
@@ -71,6 +72,20 @@ GAME_HTML = r"""
   #cross .b { bottom:-8px; left:50%; width:2px; height:8px; margin-left:-1px; }
   #cross .l { left:-8px; top:50%; width:8px; height:2px; margin-top:-1px; }
   #cross .r { right:-8px; top:50%; width:8px; height:2px; margin-top:-1px; }
+
+  /* red threat rings that appear over nearby enemies (like the reference) */
+  #threats { position:absolute; inset:0; z-index:7; pointer-events:none; }
+  .threat { position:absolute; width:70px; height:70px; margin:-35px 0 0 -35px;
+    border:3px solid #ff2b3d; border-radius:50%;
+    box-shadow:0 0 16px rgba(255,43,61,.9), inset 0 0 12px rgba(255,43,61,.5);
+    transition:opacity .12s; }
+  .threat::before, .threat::after { content:''; position:absolute; background:#ff2b3d;
+    box-shadow:0 0 8px #ff2b3d; }
+  .threat::before { top:50%; left:-10px; width:20px; height:2px; margin-top:-1px; }
+  .threat::after  { top:50%; right:-10px; width:20px; height:2px; margin-top:-1px; }
+  .threat i { position:absolute; left:50%; width:2px; background:#ff2b3d; box-shadow:0 0 8px #ff2b3d;
+    margin-left:-1px; }
+  .threat i.tt { top:-10px; height:20px; } .threat i.bb { bottom:-10px; height:20px; }
 
   #kills { bottom:24px; left:50%; transform:translateX(-50%); text-align:center; }
   #kills .box { background:rgba(8,10,16,.72); border:1px solid #2a5fff; border-radius:8px;
@@ -115,6 +130,7 @@ GAME_HTML = r"""
   <div class="row">CH 1: CARGO WATERFRONT</div>
   <div class="row" id="sector">SECTOR E&nbsp; 0/4</div>
 </div>
+<div id="threats"></div>
 <div id="cross" class="hud">
   <div class="ring"></div><div class="dot"></div>
   <span class="t"></span><span class="b"></span><span class="l"></span><span class="r"></span>
@@ -129,10 +145,10 @@ GAME_HTML = r"""
 
 <div id="overlay">
   <h1>CARGO WATERFRONT</h1>
-  <p>Night raid on the container port. Aim with the mouse, click to fire.</p>
+  <p>Night raid on the container port. Move the crosshair with your mouse (or finger on mobile) and click / tap to fire.</p>
   <p>Clear <b>5 guards</b> and you auto-advance deeper into the docks. Survive the sectors.</p>
   <button class="btn" id="startBtn">DEPLOY</button>
-  <small>Click canvas to lock aim · ESC to release · WASD nudges your stance</small>
+  <small>Aim = move mouse / drag finger · Click or tap = shoot · Red rings mark nearby threats</small>
 </div>
 
 <script type="importmap">
@@ -453,10 +469,13 @@ function makeGuard(x,z){
 
   g.position.set(x, 0, z);
   g.userData = {
-    alive:true, hp:2, torso, head, flash,
+    alive:true, hp:2, torso, head, helmet, flash,
+    legL:lL, legR:lR, armL:aL, armR:aR,
     fireCd: 1.2 + Math.random()*1.6,
     fireTimer: 1 + Math.random()*2,
     wobble: Math.random()*Math.PI*2,
+    walkPhase: Math.random()*Math.PI*2,
+    speed: 1.6 + Math.random()*1.2,   // approach speed
   };
   scene.add(g);
   guards.push(g);
@@ -631,21 +650,49 @@ function startGame(){
 startBtn.addEventListener('click', startGame);
 
 /* =========================================================
-   INPUT : mouse look (pointer lock) + click fire
+   INPUT : arcade aim-follow (NO pointer lock — works in the
+   Streamlit iframe AND on touch screens) + click/tap fire
 ========================================================= */
 const canvas = renderer.domElement;
-canvas.addEventListener('click', ()=>{
+const crossEl = document.getElementById('cross');
+
+// aim in normalized device coords (-1..1). Starts centered.
+const aim = { ndcX:0, ndcY:0, px:innerWidth/2, py:innerHeight/2 };
+
+function setAimFromPoint(clientX, clientY){
+  const r = canvas.getBoundingClientRect();
+  const x = Math.max(r.left, Math.min(r.right,  clientX));
+  const y = Math.max(r.top,  Math.min(r.bottom, clientY));
+  aim.px = x - r.left;
+  aim.py = y - r.top;
+  aim.ndcX =  ( (x - r.left) / r.width  ) * 2 - 1;
+  aim.ndcY = -( (y - r.top ) / r.height ) * 2 + 1;
+  // move the crosshair DOM to the pointer
+  crossEl.style.left = aim.px + 'px';
+  crossEl.style.top  = aim.py + 'px';
+}
+
+/* ---- MOUSE ---- */
+canvas.addEventListener('mousemove', (e)=> setAimFromPoint(e.clientX, e.clientY));
+canvas.addEventListener('mousedown', (e)=>{
   if(!state.running) return;
-  if(document.pointerLockElement !== canvas){ canvas.requestPointerLock(); return; }
+  setAimFromPoint(e.clientX, e.clientY);
   fire();
 });
-document.addEventListener('mousemove', (e)=>{
-  if(document.pointerLockElement !== canvas) return;
-  state.yaw   -= e.movementX * 0.0022;
-  state.pitch -= e.movementY * 0.0022;
-  state.pitch = Math.max(-0.6, Math.min(0.6, state.pitch));
-  state.yaw   = Math.max(-0.9, Math.min(0.9, state.yaw));
-});
+
+/* ---- TOUCH (mobile) ---- */
+canvas.addEventListener('touchstart', (e)=>{
+  if(!state.running) return;
+  const t = e.touches[0]; setAimFromPoint(t.clientX, t.clientY);
+  fire();
+  e.preventDefault();
+}, {passive:false});
+canvas.addEventListener('touchmove', (e)=>{
+  const t = e.touches[0]; setAimFromPoint(t.clientX, t.clientY);
+  e.preventDefault();
+}, {passive:false});
+
+/* ---- optional keyboard strafe (still supported on desktop) ---- */
 addEventListener('keydown', e=>{
   if(e.key==='a'||e.key==='ArrowLeft') state.strafe=-1;
   if(e.key==='d'||e.key==='ArrowRight') state.strafe=1;
@@ -665,7 +712,7 @@ function fire(){
   pistol.userData.mflash.material.opacity = 1;
   muzzleLight.intensity = 4;
 
-  raycaster.setFromCamera(new THREE.Vector2(0,0), camera);
+  raycaster.setFromCamera(new THREE.Vector2(aim.ndcX, aim.ndcY), camera);
   const hits = raycaster.intersectObjects(guardHitMeshes(), false);
   if(hits.length){
     const gd = hits[0].object.userData.guard;
@@ -729,6 +776,45 @@ addEventListener('resize', ()=>{
 });
 
 /* =========================================================
+   RED THREAT RINGS  (appear over nearby enemies, like the reference)
+========================================================= */
+const threatsEl = document.getElementById('threats');
+const ringPool = [];               // reusable DOM rings
+const projV = new THREE.Vector3();
+function getRing(i){
+  if(ringPool[i]) return ringPool[i];
+  const d = document.createElement('div');
+  d.className = 'threat';
+  d.innerHTML = '<i class="tt"></i><i class="bb"></i>';
+  threatsEl.appendChild(d);
+  ringPool[i] = d; return d;
+}
+function updateThreats(){
+  const r = renderer.domElement.getBoundingClientRect();
+  let used = 0;
+  guards.forEach(gd=>{
+    if(!gd.userData.alive) return;
+    const gap = rig.position.z - gd.position.z;      // distance in front of player
+    if(gap > 55 || gap < 2) return;                  // only rings for nearby enemies
+    // project the guard's chest to screen space
+    projV.set(gd.position.x, 1.5, gd.position.z);
+    projV.project(camera);
+    if(projV.z > 1) return;                          // behind camera
+    const x = (projV.x * 0.5 + 0.5) * r.width;
+    const y = (-projV.y * 0.5 + 0.5) * r.height;
+    const ring = getRing(used++);
+    ring.style.display = 'block';
+    ring.style.left = x + 'px';
+    ring.style.top  = y + 'px';
+    // closer = larger, brighter
+    const scale = Math.max(0.6, Math.min(2.2, 26/Math.max(4,gap)));
+    ring.style.transform = 'scale('+scale+')';
+    ring.style.opacity = String(Math.max(0.35, 1 - gap/55));
+  });
+  for(let i=used;i<ringPool.length;i++){ ringPool[i].style.display='none'; }
+}
+
+/* =========================================================
    MAIN LOOP
 ========================================================= */
 const clock = new THREE.Clock();
@@ -748,10 +834,13 @@ function animate(){
   beacons.forEach(b=> b.material.color.setHex(on?0xff2a2a:0x330808));
 
   if(state.running){
-    // camera look
-    const targetYaw = state.yaw;
+    // camera look softly follows where you are aiming (arcade pan)
+    const wantYaw   = -aim.ndcX * 0.42;
+    const wantPitch =  aim.ndcY * 0.30;
+    state.yaw   += (wantYaw   - state.yaw)   * Math.min(1, dt*8);
+    state.pitch += (wantPitch - state.pitch) * Math.min(1, dt*8);
     camera.rotation.order='YXZ';
-    camera.rotation.y = targetYaw;
+    camera.rotation.y = state.yaw;
     camera.rotation.x = state.pitch + recoil*0.5;
     // strafe stance
     rig.position.x += (state.strafe*4 - rig.position.x*0) * 0 ; // no free x drift
@@ -801,11 +890,31 @@ function animate(){
         // face player
         gd.lookAt(rig.position.x, gd.position.y, rig.position.z);
         u.wobble += dt;
-        gd.position.x += Math.sin(u.wobble*0.6)*0.004;
-        // flash decay
         u.flash.material.opacity *= 0.6;
+
+        const dz = gd.position.z - rig.position.z;   // how far ahead of player
+        const gap = -dz;                             // positive distance in front
+
+        // ---- WALK toward the player until they get close, with limb swing ----
+        const holdAt = 16 + (gd.id||0)%6;            // stop distance so they don't overrun
+        const moving = gap > holdAt && !state.advancing;
+        if(moving){
+          const step = u.speed * dt;
+          gd.position.z += step;                     // move toward player (+z)
+          gd.position.x += (rig.position.x - gd.position.x) * Math.min(1, dt*0.3);
+          u.walkPhase += dt * 8;
+        } else {
+          u.walkPhase += dt * 2;                     // idle sway
+        }
+        // animate legs & arms so they don't glide like ghosts
+        const sw = Math.sin(u.walkPhase) * (moving ? 0.7 : 0.12);
+        u.legL.rotation.x =  sw;
+        u.legR.rotation.x = -sw;
+        u.armL.rotation.x = -0.5 - sw*0.5;
+        u.armR.rotation.x = -0.5 + sw*0.5;
+        u.torso.position.y = 1.32 + Math.abs(Math.sin(u.walkPhase))*(moving?0.03:0.008);
+
         // shoot at player when in range and roughly ahead
-        const dz = gd.position.z - rig.position.z;
         if(dz < 0 && dz > -60){
           u.fireTimer -= dt;
           if(u.fireTimer<=0){
@@ -836,6 +945,11 @@ function animate(){
       g.children.forEach(p=>{ p.position.addScaledVector(p.userData.v, dt); p.material.opacity=Math.max(0,g.userData.life*2); });
       if(g.userData.life<=0){ scene.remove(g); puffs.splice(i,1); }
     }
+
+    /* ---- red threat rings over nearby enemies ---- */
+    updateThreats();
+  } else {
+    for(let i=0;i<ringPool.length;i++){ ringPool[i].style.display='none'; }
   }
 
   renderer.render(scene, camera);
